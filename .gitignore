@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.ornek
+.venv/
+__pycache__/
+calisma/
+videolar/
+dosya_no.txt
+sunucu_parmakizi.txt
+yuklenecek.tgz

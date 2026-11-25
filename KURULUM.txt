@@ -1,0 +1,81 @@
+YORUM KANALI SİSTEMİ – KURULUM (Windows)
+==========================================
+
+GEREKENLER
+- Python 3.12: python.org/downloads adresinden indir. Kurulumun ilk ekranında
+  "Add python.exe to PATH" kutusunu MUTLAKA işaretle.
+- Telegram bot token'ı (@BotFather)
+- ElevenLabs Starter planı, ses klonun ve API anahtarın
+- Anthropic API anahtarın (console.anthropic.com)
+
+KURULUM (bir kez, ~10 dakika)
+1. Bu klasörü bilgisayarında kalıcı bir yere çıkar (örneğin Belgeler\yorum-kanali).
+2. kurulum.bat dosyasına çift tıkla.
+   - ffmpeg yoksa önce onu kurar ve pencereyi kapatıp kurulum.bat'ı tekrar
+     çalıştırmanı ister. Bir kez daha çift tıkla.
+3. Kurulum bitince Not Defteri'nde .env dosyası açılır. Anahtarlarını
+   = işaretinden sonra yapıştır ve kaydet. IZINLI_KULLANICI_ID şimdilik boş kalabilir.
+   - ELEVENLABS_VOICE_ID: ElevenLabs'te klonladığın sesin yanındaki "Voice ID".
+4. demo.bat'a çift tıkla. Sessiz bir örnek video oluşup açılırsa kurulum tamam.
+
+İLK ÇALIŞTIRMA
+1. baslat.bat'a çift tıkla. Siyah pencere açık kaldığı sürece bot çalışır.
+2. Telegram'da kendi botunu aç ve /start yaz. Bot sana kullanıcı numaranı söyler.
+3. Bu numarayı .env dosyasındaki IZINLI_KULLANICI_ID= satırına yaz, kaydet.
+4. Siyah pencereyi kapat, baslat.bat'ı tekrar aç. Artık bot sadece sana çalışır.
+
+SUNUCUDA ÇALIŞTIRMA VE TELEFONDAN YÖNETİM
+=========================================
+Bot Hetzner sunucunda 7/24 çalışır. Kurulumdan sonra bilgisayar gerekmez.
+1. sunucuya_gonder.bat'a bir kez çift tıkla (şifre sorarsa sunucunun root şifresi).
+2. Telegram'da botuna /start yaz. İlk yazan kişi botun sahibi olur.
+
+Telefondan ayarlar (Telegram'da bota yaz):
+/ayarlar              hangi ayarın eksik olduğunu gösterir
+/elevenlabs ANAHTAR   ElevenLabs anahtarını kaydeder, klon sesini kendisi bulur
+/ses                  birden fazla ses varsa seçtirir
+/anthropic ANAHTAR    Anthropic anahtarını kaydeder (anahtarlı mesajın silinir)
+/kanal AD             videolardaki kanal adını değiştirir
+
+Telefondan güncelleme:
+Bota /guncelle yaz. Bot GitHub'daki (ssezenbay-cpu/yorum-kanali) son sürümü
+indirir, dosyaları kontrol eder; sorun varsa eski sürümde kalır, yoksa kendini
+yeniden başlatır. Yedek yol: yorum-kanali.zip dosyasını bota göndermek.
+Sorun olursa /kayit ile son kayıtları görebilirsin.
+
+Bilgisayardan gönderirsen (sunucuya_gonder): sunucudaki ayarların korunur,
+bilgisayardaki .env yalnızca boş ayarları doldurur. Telegram token'ı ise her
+zaman bilgisayardakiyle güncellenir. Sunucu kullanılırken baslat.bat'ı çalıştırma.
+
+ÜRÜN SEÇİMİ VE ÖLÇÜM
+Her pazartesi 10:00'da bot 5 ürün adayı gönderir: günlük ürün, ev elektroniği ve
+pahalı ürün gruplarından. Video yayınlandıktan 3-7 gün sonra /sonuc ile izlenme,
+tıklama ve (varsa) kazancı gir. Her grupta 3+ video sonucu olunca bot, hangi grup
+daha çok kazandırıyorsa sonraki listelerde ondan daha çok aday önerir.
+
+GÜNLÜK KULLANIM (telefondan)
+1. Ürün sayfasının ekran görüntüsünü gönder (ilk görüntü bu olmalı:
+   ürün adı, fiyat, puan görünsün).
+2. Yorumların ekran görüntülerini gönder: toplam en az 30 yorum,
+   bir kısmı 1-2 yıldızlılardan (yorum filtresinden seçebilirsin).
+   İpucu: görüntüleri "Dosya" olarak gönderirsen daha net okunur.
+3. /hazirla yaz. 2-4 dakika içinde video, başlık ve açıklama gelir.
+4. Kontrol listesine bak, sonra TikTok, YouTube ve Instagram'a yükle.
+
+KOMUTLAR
+/hazirla  gönderilen görüntülerden video üretir
+/durum    kaç görüntü beklediğini gösterir
+/iptal    bekleyen görüntüleri siler
+/oneri    internette araştırıp 5 ürün adayı önerir (her pazartesi 10:00'da kendiliğinden gelir)
+/sonuc    videonun sonucunu kaydeder: /sonuc DOSYA_NO İZLENME TIKLAMA [KAZANÇ]
+/rapor    hangi ürün grubunun (günlük, ev elektroniği, pahalı) daha iyi gittiğini gösterir
+/demo     API kullanmadan sessiz örnek video yapar
+/kayit    botun son kayıtlarını gösterir
+/yeniden  botu yeniden başlatır
+
+NOTLAR
+- Bilgisayar kapalıyken bota gönderdiklerin 24 saate kadar bekler; bilgisayarı
+  açıp baslat.bat'ı çalıştırınca işlenir. /hazirla komutunu da tekrar yaz.
+- Videolar "videolar" klasörüne, her dosyanın görüntüleri ve senaryosu
+  "calisma" klasörüne kaydedilir.
+- .env dosyasını kimseyle paylaşma; içinde anahtarların var.
