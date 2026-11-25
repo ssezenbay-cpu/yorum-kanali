@@ -838,15 +838,18 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gorseller = sorted(p for p in klasor.iterdir()
                        if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and p.name != "kapak.png") \
         if klasor.exists() else []
-    if tam and not gorseller:
+    if tam and not gorseller and not (analiz_yolu.exists() and
+                                      json.loads(analiz_yolu.read_text(encoding="utf-8")).get("arama")):
         await update.message.reply_text(f"#{no} için kayıtlı ekran görüntüsü yok; /arastir ile yeniden yapabilirsin.")
         return
     if not tam and not analiz_yolu.exists():
         await update.message.reply_text(f"#{no} için kayıtlı analiz yok. Görüntüler duruyorsa: /tekrar {no} tam")
         return
-    veri = json.loads(analiz_yolu.read_text(encoding="utf-8")) if not tam else None
+    eski_veri = json.loads(analiz_yolu.read_text(encoding="utf-8")) if analiz_yolu.exists() else {}
+    arama = eski_veri.get("arama")  # /arastir ile yapılmışsa yeniden internetten okunur
+    veri = eski_veri if not tam else None
     if veri is not None and veri.get("surum", 0) < SENARYO_SURUMU:
-        if gorseller:
+        if gorseller or arama:
             tam, veri = True, None
             await update.message.reply_text(
                 f"#{no} metni eski kurallarla yazılmıştı (uzun, fiyatı okuyordu). Yeni kısa metin yazılıyor.")
@@ -862,7 +865,10 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"#{no} yeniden analiz ediliyor…" if tam else f"#{no} yeniden seslendiriliyor…")
         try:
             if tam:
-                veri = await asyncio.to_thread(analiz_et, gorseller, no)
+                if arama:
+                    veri = await asyncio.to_thread(arastirma.arastir, arama, no, gorseller)
+                else:
+                    veri = await asyncio.to_thread(analiz_et, gorseller, no)
                 analiz_yolu.write_text(json.dumps(veri, ensure_ascii=False, indent=1), encoding="utf-8")
                 video_kaydet(no, veri)
                 await durum_mesaji.edit_text(f"#{no} seslendiriliyor… (hüküm: {veri['hukum']})")
