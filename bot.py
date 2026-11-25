@@ -892,11 +892,13 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         no = int(context.args[0].lstrip("#"))
     except (IndexError, ValueError):
         await update.message.reply_text("Kullanım: /tekrar DOSYA_NO   (ör. /tekrar 1)\n"
-                                        "Analizi de yenilemek için: /tekrar 1 tam")
+                                        "Analizi de yenilemek için: /tekrar 1 tam\n"
+                                        "Ürün adını düzeltmek için: /tekrar 1 MARKA MODEL")
         return
     klasor = CALISMA / f"dosya_{no:03d}"
     analiz_yolu = klasor / "analiz.json"
     tam = len(context.args) > 1 and context.args[1].lower() in ("tam", "analiz")
+    yeni_ad = " ".join(context.args[2 if tam else 1:]).strip()[:80]  # /tekrar 3 Tefal Ingenio 3'lü set
     gorseller = sorted(p for p in klasor.iterdir()
                        if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and p.name != "kapak.png") \
         if klasor.exists() else []
@@ -927,6 +929,9 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                                         if n not in yeni_no]
             analiz_yolu.write_text(json.dumps(eski_veri, ensure_ascii=False, indent=1), encoding="utf-8")
         await update.message.reply_text(f"{len(eklenen)} fotoğraf #{no} için ürün fotoğrafı olarak eklendi.")
+    if yeni_ad and eski_veri:
+        eski_veri["urun_adi"] = yeni_ad
+        analiz_yolu.write_text(json.dumps(eski_veri, ensure_ascii=False, indent=1), encoding="utf-8")
     veri = eski_veri if not tam else None
     if veri is not None and veri.get("surum", 0) < SENARYO_SURUMU:
         if gorseller or arama:
@@ -948,7 +953,10 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if arama:
                     veri = await asyncio.to_thread(arastirma.arastir, arama, no, gorseller)
                 else:
-                    veri = await asyncio.to_thread(analiz_et, gorseller, no)
+                    veri = await asyncio.to_thread(analiz_et, gorseller, no,
+                                                   yeni_ad or eski_veri.get("urun_adi_kullanici", ""))
+                if yeni_ad:
+                    veri["urun_adi_kullanici"] = yeni_ad
                 analiz_yolu.write_text(json.dumps(veri, ensure_ascii=False, indent=1), encoding="utf-8")
                 video_kaydet(no, veri)
                 await durum_mesaji.edit_text(f"#{no} seslendiriliyor… (hüküm: {veri['hukum']})")
