@@ -10,6 +10,7 @@ import anthropic
 from PIL import Image, ImageOps
 
 import ayarlar as A
+from okunus import ek_uyumla, sozluk
 from veriler import GRUPLAR, fiyat_sayi
 
 ROLLER = ["acilis", "baglam", "ovgu", "sikayet", "hukum", "kapanis"]
@@ -141,7 +142,10 @@ Kesin kurallar:
      ovulenler ve sikayetler listesine yalnızca metinde sayısıyla söylediğin konuları koy (ekrandaki her satır seslendirilmeli).
    hukum: "Hüküm: ..." ve kime uygun olduğu, kısa. "kime_uygun" somut bir kullanım ya da kişi tarifi olsun
      ("küçük evde hızlı temizlik için", "uzun süre çalışacaksan değil"); "riski göze alanlar" gibi boş ifade yok.
-   kapanis: "Sıradaki dosyayı sen seç. Yorumlara yaz. Yorum dosyası #N."
+   kapanis: izleyiciye iki somut ürün türü arasında seçim sor, sonra "Yorumlara yaz. Yorum dosyası #N."
+     Biçim: "Sıradaki dosya: <tür 1> mı, <tür 2> mi? Yorumlara yaz. Yorum dosyası #N." (soru ekini ünlü uyumuna göre yaz).
+     İki tür "siradaki" alanına da yazılır: bu ürünü merak eden birinin de merak edeceği, bu üründen farklı,
+     Türkiye'de çok satılan iki ürün türü; her biri en fazla 2 kelime, marka yok.
 9. ekran_acilis: ilk karedeki büyük yazı, en fazla 7 kelime, sesteki gibi sade: "9 alıcı aynı şeyi yazmış".
    Bölü işaretiyle oran yazma; oran ekranda ayrıca küçük etiket olarak gösteriliyor.
 10. ovulenler ve sikayetler yalnızca verilen listeden seçilir; konu adı ve sayı listedekiyle aynı. Aynı konu iki tarafta olmasın.
@@ -157,13 +161,14 @@ SENARYO_SEMA = """{{
   "uygun": "en fazla 6 kelime: kime ya da ne için uygun (ör. müzik dinleyen, kısıtlı bütçe)",
   "uygun_degil": "en fazla 6 kelime: kime uygun değil (ör. telefonla çok konuşan)",
   "ekran_acilis": "en fazla 7 kelime, oranlı; hüküm değil",
+  "siradaki": ["ürün türü 1", "ürün türü 2"],
   "senaryo": {{
     "acilis": "...",
     "baglam": "...",
     "ovgu": "...",
     "sikayet": "...",
     "hukum": "...",
-    "kapanis": "Sıradaki dosyayı sen seç. Yorumlara yaz. Yorum dosyası #{no}."
+    "kapanis": "Sıradaki dosya: ... mı, ... mi? Yorumlara yaz. Yorum dosyası #{no}."
   }},
   "baslik": "en fazla 60 karakter, merak uyandıran",
   "aciklama": "2-3 cümle",
@@ -292,6 +297,12 @@ def _guvenlik_riski(sayim):
     return None
 
 
+def siradaki_secenekler():
+    """/siradaki A | B ile belirlenen iki ürün türü (yoksa model seçer)."""
+    parcalar = [" ".join(p.split())[:26] for p in str(getattr(A, "SIRADAKI", "") or "").split("|") if p.strip()]
+    return parcalar[:2] if len(parcalar) >= 2 else []
+
+
 def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi="", zorunlu_hukum=""):
     """Sayımı yapar, metni bu sayılarla yazdırır ve doğrulanmış video verisini döndürür."""
     if "hata" in okuma:
@@ -322,6 +333,10 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi="", zorunlu_h
     istek = (f"Bu video \"Yorum dosyası #{no}\" olacak.\n\n{tablo}\n\nBu sayılarla şu yapıda JSON döndür:\n"
              + SENARYO_SEMA.format(no=no))
     risk = _guvenlik_riski(sayim)
+    secim = siradaki_secenekler()
+    if secim:
+        istek = (f"Kapanışta sorulacak iki ürün türü kesinlikle bunlar: \"{secim[0]}\" ve \"{secim[1]}\"; "
+                 "\"siradaki\" alanına da bunları yaz.\n" + istek)
     if zorunlu_hukum:
         istek = f"Hüküm kesinlikle \"{zorunlu_hukum}\" olacak; metni buna göre yaz.\n" + istek
     sistem_ = SENARYO_SISTEM.replace("{kanal}", A.KANAL_ADI)
@@ -341,6 +356,8 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi="", zorunlu_h
                                                  "baslik", "aciklama")})
     if not veri["kime_uygun"] and veri["uygun"]:
         veri["kime_uygun"] = veri["uygun"]
+    siradaki = [" ".join(str(s).split())[:26] for s in (yazi.get("siradaki") or []) if str(s).strip()]
+    veri["siradaki"] = secim or (siradaki[:2] if len(siradaki) >= 2 else [])
     veri["senaryo"] = yazi.get("senaryo") if isinstance(yazi.get("senaryo"), dict) else {}
     veri["etiketler"] = yazi.get("etiketler") or []
     veri["urun_gorseli"] = okuma.get("urun_gorseli")
@@ -378,6 +395,16 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi="", zorunlu_h
     if not veri["senaryo"]:
         raise AnalizHatasi("Metin yazılamadı. Tekrar dene.")
     veri = dogrula(veri, no)
+    kapanis_ = veri["senaryo"]["kapanis"].lower()
+    if veri["siradaki"] and not all(s.lower() in kapanis_ for s in veri["siradaki"]):
+        # ekrandaki iki seçenek seste de aynı olsun
+        a, b = veri["siradaki"]
+        okunuslar = sozluk()
+        def mi(s):  # soru eki okunuşa göre: "airfryer" -> Erfrayır -> mı
+            son = s.split()[-1]
+            return ek_uyumla(okunuslar.get(son.lower(), son), "mı")
+        veri["senaryo"]["kapanis"] = (f"Sıradaki dosya: {a} {mi(a)}, {b} {mi(b)}? "
+                                      f"Yorumlara yaz. Yorum dosyası #{no}.")
     if sayim["urun_yorumu"] < 100 and "kesin" not in veri["senaryo"]["hukum"].lower():
         veri["senaryo"]["hukum"] = veri["senaryo"]["hukum"].rstrip(" .") + ". Yorum az, sonuç kesin değil."
     izinli = {sayim["okunan_yorum"], sayim["urun_yorumu"], no} | {k["sayi"] for k in sayim["konular"]}

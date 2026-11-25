@@ -28,7 +28,7 @@ import miksaj
 import okunus
 import urun_avi
 from analiz import (ROLLER, SENARYO_SURUMU, AnalizHatasi, analiz_et, analiz_metinden, anthropic_dogrula,
-                    metni_yeniden_yaz, paketi_dogrula, sayim_metni)
+                    metni_yeniden_yaz, paketi_dogrula, sayim_metni, siradaki_secenekler)
 from demo import demo_uret
 from ayarlar import (CALISMA, CIKTI, GELEN, KOK, TELEGRAM_PROXY, TELEGRAM_TOKEN, eksik_ayarlar,
                      maskele, no_kaydet, sonraki_no)
@@ -69,6 +69,7 @@ YARDIM = (
     "/rapor – hangi ürün grubunun daha iyi gittiğini gösterir\n"
     "/demo – API kullanmadan sessiz örnek video yapar\n"
     "/okunus KELİME = OKUNUŞ – yanlış okunan kelimeyi düzeltir (ör. /okunus Dreame = Drim)\n"    "/dene 31 – bir sayının ya da cümlenin okunuşunu dinletir; doğru olanı seçersin\n"
+    "/siradaki airfryer | robot süpürge – videonun sonunda izleyiciye sorulacak iki ürün\n"
     "/tekrar NO – videonun sesini ve kurgusunu yeniden yapar; /tekrar NO tam analizi de yeniler\n\n"
     "Ayarlar:\n"
     "/ayarlar – hangi ayarların tamam olduğunu gösterir\n"
@@ -429,6 +430,27 @@ async def efekt_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Ses efektleri: {'açık' if miksaj.efektler_acik() else 'kapalı'} (geçişte whoosh, sayılarda pop, hükümde damga).\n"
         "Değiştirmek için: /efekt ac | kapat")
+
+
+async def siradaki_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/siradaki airfryer | robot süpürge: kapanışta izleyiciye sorulacak iki ürün türü."""
+    if not yetkili(update):
+        return
+    metin = " ".join(context.args).strip()
+    if metin.lower() in ("sil", "otomatik", "kapat"):
+        A.kaydet("SIRADAKI", "")
+    elif metin:
+        parcalar = [p.strip() for p in metin.split("|") if p.strip()]
+        if len(parcalar) != 2:
+            await update.message.reply_text("İki ürün türünü | ile ayır: /siradaki airfryer | robot süpürge")
+            return
+        A.kaydet("SIRADAKI", " | ".join(parcalar))
+    simdiki = siradaki_secenekler()
+    await update.message.reply_text(
+        (f"Videoların sonunda sorulacak: {simdiki[0]} ya da {simdiki[1]}\n"
+         if simdiki else "Videoların sonunda sorulacak iki ürünü yapay zekâ ürüne göre seçiyor.\n")
+        + "Kendin belirlemek için: /siradaki airfryer | robot süpürge\nOtomatiğe dönmek için: /siradaki sil\n"
+        "Mevcut videoya uygulamak için: /tekrar NO metin")
 
 
 async def kayit_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -880,6 +902,12 @@ def yayin_kontrolu(veri, no):
         satirlar.append("✅ Müzik var")
     else:
         satirlar.append("⚠️ Müzik yok. Bota bir mp3 gönder")
+    if veri.get("sikayetler"):
+        en_buyuk = veri["sikayetler"][0]
+        satirlar.append(f"✅ Karar: {veri.get('hukum', '')} (en büyük şikâyet: {en_buyuk['konu']}, {en_buyuk['sayi']} kişi). "
+                        f"Farklı karar için: /tekrar {no} metin ALINIR | ALINMAZ | DİKKATLİ AL")
+    if len(veri.get("siradaki") or []) == 2:
+        satirlar.append(f"✅ Kapanış sorusu: {veri['siradaki'][0]} ya da {veri['siradaki'][1]} (değiştirmek için /siradaki)")
     if veri.get("uyarilar"):
         satirlar.append(f"⚠️ Analizde {len(veri['uyarilar'])} uyarı var (aşağıda)")
     tamam = not any(s.startswith(("❌", "⚠️")) for s in satirlar)
@@ -897,7 +925,9 @@ def paylasim_metni(veri, no):
         f"BAŞLIK:\n{veri['baslik']}",
         f"AÇIKLAMA:\n{veri.get('aciklama', '').strip()}\n\n{kaynak}"
         + (f"Ürün linki profilde: Yorum dosyası #{no}. Profildeki link satış ortaklığı linkidir. #işbirliği\n"
-           if A.LINK_PROFILDE else f"Yorum dosyası #{no}. Sıradaki ürünü yorumlara yaz.\n")
+           if A.LINK_PROFILDE else f"Yorum dosyası #{no}.\n")
+        + (f"Sıradaki dosya hangisi olsun: {veri['siradaki'][0]} ya da {veri['siradaki'][1]}? Yorumlara yaz.\n"
+           if len(veri.get("siradaki") or []) == 2 else "Sıradaki ürünü yorumlara yaz.\n")
         + f"{etiketler}",
     ]
     if veri.get("satici"):
@@ -1313,6 +1343,7 @@ def main():
     uygulama.add_handler(CommandHandler("tema", tema_komutu))
     uygulama.add_handler(CallbackQueryHandler(tema_secildi, pattern=r"^tema:"))
     uygulama.add_handler(CommandHandler("dene", dene_komutu))
+    uygulama.add_handler(CommandHandler("siradaki", siradaki_komutu))
     uygulama.add_handler(CallbackQueryHandler(okunus_secildi, pattern=r"^oku:"))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("zip"), guncelleme_al))

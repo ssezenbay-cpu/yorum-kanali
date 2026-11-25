@@ -30,6 +30,7 @@ VIDEO_TEMA = _al("VIDEO_TEMA", "lacivert")  # lacivert | canli | acik | sari | k
 SES_HIZI = _al("SES_HIZI", "1.1")        # seslendirme hızı (/hiz); 1.15 üstü sonradan hızlandırılır
 MUZIK = _al("MUZIK", "1")                # gönderilen müzikler videoya eklensin mi (/muzik ac|kapat)
 MUZIK_SES = _al("MUZIK_SES", "0.35")     # müziğin ses seviyesi (/muzik ses 0.35)
+SIRADAKI = _al("SIRADAKI", "")           # kapanışta sorulacak iki ürün türü, "airfryer | robot süpürge" (/siradaki)
 EFEKT = _al("EFEKT", "1")                # whoosh / pop / damga efektleri (/efekt ac|kapat)
 FFMPEG = _al("FFMPEG_YOLU", "ffmpeg") or "ffmpeg"
 

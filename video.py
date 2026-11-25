@@ -512,7 +512,6 @@ class Kurgu:
         self.maske = yuvarlak_maske(pw, ph, 34)
         self.ad_seridi = self._ad_seridi(pw) if not self.ad_karti else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
         self._isik_hazirla()
-        self._dipnot_ciz(self.arka)
 
     def _ad_karti_ciz(self, en, boy):
         """Ürün fotoğrafı yokken panel: ürünün adı büyük harflerle, kategori üstte."""
@@ -601,24 +600,27 @@ class Kurgu:
         p, v = self.p, self.veri
         c = ImageDraw.Draw(resim)
         c.text((KENAR - 30, BASLIK_Y), tr_buyuk(A.KANAL_ADI), font=FS(36), fill=p["baslik"])
-        parcalar = []
-        if v.get("fiyat"):
-            parcalar.append(str(v["fiyat"]))
-        if v.get("puan"):
-            parcalar.append(f"★ {v['puan']}")
-        if v.get("toplam_yorum"):
-            toplam_ = str(v["toplam_yorum"]).strip()
-            if toplam_.isdigit() and len(toplam_) > 3:
-                toplam_ = f"{int(toplam_):,}".replace(",", ".")
-            parcalar.append(toplam_ if re.search(r"[a-zçğıöşü]", toplam_.lower()) else f"{toplam_} değerlendirme")
+        toplam_ = str(v.get("toplam_yorum") or "").strip()
+        sitede = re.search(r"(\d[\d.]*)\s*yorum", toplam_, re.I)
+        puan_sayisi = re.search(r"(\d[\d.]*)\s*(puan|değerlendirme)", toplam_, re.I)
+        if toplam_.isdigit():
+            puan_sayisi = re.match(r"(\d+)", toplam_)
+        okunan = int(v.get("okunan_yorum") or 0)
+        site_yorum = int(sitede.group(1).replace(".", "")) if sitede else 0
+        tarih = v.get("tarih") or datetime.now().strftime("%d.%m.%Y")
+        oran = f"{okunan}/{site_yorum}" if 0 < okunan <= site_yorum else str(okunan)
+        fiyat = [str(v["fiyat"])] if v.get("fiyat") else []
+        puan = [f"★ {v['puan']}"] if v.get("puan") else []
+        puan_uzun = [f"★ {v['puan']} ({puan_sayisi.group(1)})"] if (v.get("puan") and puan_sayisi) else puan
+        veri_ = [f"{oran} yorum okundu · {tarih}"] if okunan else []
+        kisa = [f"{oran} yorum okundu · {tarih[:5]}"] if okunan else []
         font = F(30)
-        while parcalar:
+        for parcalar in (fiyat + puan_uzun + veri_, fiyat + puan + veri_, fiyat + puan + kisa, puan + kisa, kisa):
             genislikler = [olc(c, m, font) + 40 for m in parcalar]
             toplam = sum(genislikler) + 12 * (len(parcalar) - 1)
-            if toplam <= G - 2 * KENAR + 40:
+            if parcalar and toplam <= G - 2 * KENAR + 40:
                 break
-            parcalar.pop()
-        if not parcalar:
+        else:
             return
         x = (G - toplam) / 2
         for metin, en in zip(parcalar, genislikler):
@@ -859,7 +861,7 @@ class Kurgu:
             kanca = kanca.resize((int(kanca.width * olcek), int(kanca.height * olcek)), Image.BILINEAR)
         y = ICERIK_Y + 40 + (self._kanca.height - kanca.height) // 2
         resim.paste(kanca, ((G - kanca.width) // 2, y), kanca)
-        if self._kanca_oran and t > 0.35:
+        if self._kanca_oran and t > 1.1:
             c = ImageDraw.Draw(resim)
             font = F(32)
             en = c.textlength(self._kanca_oran, font=font) + 40
@@ -901,16 +903,20 @@ class Kurgu:
     def _alinti_ciz(self, c, ust, renk, metin, dx):
         """Gerçek bir alıcıdan kısa, isimsiz alıntı."""
         p = self.p
-        satirlar = sar(c, f"“{metin}”", F(36, False), G - 2 * KENAR - 20)[:2]
-        yukseklik = len(satirlar) * 46 + 44
-        if ust + yukseklik > ICERIK_ALT:
+        for boyut in (50, 44, 38, 34):
+            satirlar = sar(c, f"“{metin}”", F(boyut), G - 2 * KENAR - 20)
+            aralik = int(boyut * 1.28)
+            yukseklik = min(2, len(satirlar)) * aralik + 44
+            if len(satirlar) <= 2 and ust + yukseklik <= ICERIK_ALT:
+                break
+        else:
             return
-        c.rectangle((KENAR - 30 + dx, ust + 4, KENAR - 24 + dx, ust + yukseklik - 10), fill=renk)
+        c.rectangle((KENAR - 30 + dx, ust + 4, KENAR - 22 + dx, ust + yukseklik - 10), fill=renk)
         for i, s in enumerate(satirlar):
-            c.text((KENAR + dx, ust + i * 46), s, font=F(36, False), fill=p["metin"])
+            c.text((KENAR + dx, ust + i * aralik), s, font=F(boyut), fill=p["metin"])
         imza = "— bir alıcı"
-        c.text((G - KENAR - c.textlength(imza, font=F(26, False)) + dx, ust + len(satirlar) * 46 + 4), imza,
-               font=F(26, False), fill=p["ikincil"])
+        c.text((G - KENAR - c.textlength(imza, font=F(28, False)) + dx, ust + len(satirlar) * aralik + 6), imza,
+               font=F(28, False), fill=p["ikincil"])
 
     def _cubuklar(self, t, tg, sahne, baslik, renk, ogeler, alinti):
         resim = self._taban(tg)
@@ -923,7 +929,9 @@ class Kurgu:
         alt = ust + 80 + len(ogeler) * aralik + 6
         self._kart(c, dx, ust, alt, renk)
         self._hap(c, KENAR - 14 + dx, ust - 22, baslik, renk)
-        toplam = max(1, self.veri.get("urun_yorumu", self.veri["okunan_yorum"]))
+        # Ortak ölçek: övgü ve şikâyetteki en büyük sayı tam çubuk. Kalan yorumlar o konudan söz etmemiş,
+        # olumsuz değil; toplama göre çizince "az kişi beğenmiş" gibi görünüyordu. İki kart birbiriyle kıyaslanabilir.
+        toplam = max([1] + [o["sayi"] for o in (self.veri.get("ovulenler") or []) + (self.veri.get("sikayetler") or [])])
         sag = G - KENAR + 12
         ilk_gir = None
         for i, oge in enumerate(ogeler):
@@ -937,7 +945,7 @@ class Kurgu:
             konu = sar(c, oge["konu"], F(boyut), sag - KENAR - 170)[:1]
             c.text((KENAR - 12 + dx, y + (40 - boyut) // 2), konu[0] if konu else "", font=F(boyut),
                    fill=p["metin"] if ilerleme > 0 else p["ikincil"])
-            etiket = f"{oge['sayi']}/{toplam}"
+            etiket = f"{oge['sayi']} kişi"
             if ilerleme > 0:
                 font = FS(int(40 + 12 * (1 - min(1, (t - gir) / 0.4))))
                 en = c.textlength(etiket, font=font)
@@ -973,19 +981,19 @@ class Kurgu:
                 satirlar += [("✗ ", p["kirmizi"], "Değil: " + v["uygun_degil"])]
             if not satirlar and v.get("kime_uygun"):
                 satirlar = [("", p["metin"], v["kime_uygun"])]
-            dizilmis = [(isaret, irenk, sar(c, metin, F(38), G - 2 * KENAR - 50)[:2])
+            dizilmis = [(isaret, irenk, sar(c, metin, F(44), G - 2 * KENAR - 60)[:2])
                         for isaret, irenk, metin in satirlar]
-            yukseklik = sum(len(s) * 50 + 18 for _, _, s in dizilmis) + 44
+            yukseklik = sum(len(s) * 58 + 22 for _, _, s in dizilmis) + 48
             ust = ICERIK_Y + 30
             self._kart(c, 0, ust, ust + yukseklik, renk)
-            y = ust + 26
+            y = ust + 28
             for isaret, irenk, parcalar in dizilmis:
                 if isaret:
-                    yaz(c, (KENAR - 10, y), isaret.strip(), F(38), irenk)
+                    yaz(c, (KENAR - 10, y), isaret.strip(), F(44), irenk)
                 for s in parcalar:
-                    c.text((KENAR + 34, y), s, font=F(38), fill=p["metin"])
-                    y += 50
-                y += 18
+                    c.text((KENAR + 40, y), s, font=F(44), fill=p["metin"])
+                    y += 58
+                y += 22
         metin = v["hukum"]
         font = FD(150 if len(metin) <= 8 else 128)
         sol, ust_, sag, alt = c.textbbox((0, 0), metin, font=font)
@@ -1014,6 +1022,9 @@ class Kurgu:
         if A.LINK_PROFILDE:
             alt.append("Link profilde · satış ortaklığı linki")
         ust = ICERIK_Y + 20
+        secenekler = [s for s in (self.veri.get("siradaki") or []) if s][:2]
+        if len(secenekler) == 2:
+            return self._kapanis_secenekli(resim, c, t, dx, ust, secenekler, alt)
         self._kart(c, dx, ust, ust + 210 + 44 * len(alt), p["vurgu"])
         for i, (metin, renk) in enumerate((("Sıradaki dosyayı sen seç", p["metin"]),
                                           ("Yorumlara yaz ↓", p["vurgu"]))):
@@ -1025,6 +1036,50 @@ class Kurgu:
             en = c.textlength(s, font=F(30, False))
             c.text(((G - en) / 2 + dx, ust + 192 + i * 44), s, font=F(30, False), fill=p["ikincil"])
         return resim
+
+
+def _secenekli_kapanis(self, resim, c, t, dx, ust, secenekler, alt):
+    """"Sıradaki dosya hangisi?" + iki ürün türü hapı + "Yorumlara yaz"."""
+    p = self.p
+    secenekler = [s[:1].upper() + s[1:] for s in secenekler]  # "Airfryer" (büyük harfle "AİRFRYER" garip duruyor)
+    arada = c.textlength("ya da", font=F(34)) + 40
+    for boyut in (48, 42, 36, 48):  # sığmazsa küçülür; yine sığmazsa alt alta
+        font = FS(boyut)
+        enler = [c.textlength(s, font=font) + 64 for s in secenekler]
+        yan_yana = sum(enler) + arada <= G - 2 * KENAR + 40
+        if yan_yana:
+            break
+    hap_yuk = boyut + 34
+    yukseklik = 96 + (hap_yuk if yan_yana else 2 * hap_yuk + 48) + 110 + 40 * len(alt)
+    self._kart(c, dx, ust, ust + yukseklik, p["vurgu"])
+    baslik = "Sıradaki dosya hangisi?"
+    c.text(((G - c.textlength(baslik, font=FS(52))) / 2 + dx, ust + 26), baslik, font=FS(52), fill=p["metin"])
+    y = ust + 104
+    if yan_yana:
+        x = (G - sum(enler) - arada) / 2 + dx
+        konumlar = [(x, y), (x + enler[0] + arada, y)]
+        c.text((x + enler[0] + 20, y + (hap_yuk - 40) // 2), "ya da", font=F(34), fill=p["ikincil"])
+    else:
+        konumlar = [((G - enler[0]) / 2 + dx, y), ((G - enler[1]) / 2 + dx, y + hap_yuk + 48)]
+        c.text(((G - c.textlength("ya da", font=F(30))) / 2 + dx, y + hap_yuk + 6), "ya da", font=F(30),
+               fill=p["ikincil"])
+    for i, ((x, yy), metin, en) in enumerate(zip(konumlar, secenekler, enler)):
+        if t < 0.25 + 0.35 * i:
+            continue
+        renk = p["vurgu"] if i == 0 else p["yesil"]
+        c.rounded_rectangle((x, yy, x + en, yy + hap_yuk), hap_yuk // 2, fill=renk)
+        c.text((x + 32, yy + 12), metin, font=font, fill=(255, 255, 255))
+    y = konumlar[-1][1] + hap_yuk + 22
+    if t > 0.9:
+        metin = "Yorumlara yaz ↓"
+        yaz(c, ((G - olc(c, metin, FS(48))) / 2 + dx, y), metin, FS(48), p["vurgu"])
+    for i, s in enumerate(alt):
+        en = c.textlength(s, font=F(28, False))
+        c.text(((G - en) / 2 + dx, y + 74 + i * 40), s, font=F(28, False), fill=p["ikincil"])
+    return resim
+
+
+Kurgu._kapanis_secenekli = _secenekli_kapanis
 
 
 def _zamanlar(segmentler, hiz):
