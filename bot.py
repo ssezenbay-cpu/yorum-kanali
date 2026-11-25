@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 
 import requests
@@ -93,6 +94,9 @@ KONTROL = (
 
 def yetkili(update: Update) -> bool:
     return bool(A.IZINLI_KULLANICI_ID) and str(update.effective_user.id) == A.IZINLI_KULLANICI_ID
+
+
+ESKI_GORUNTU_DK = 10  # bu kadar dakikadan sonra gelen görüntüde "yeni ürün mü?" diye sorulur
 
 
 def oturum(chat_id):
@@ -563,16 +567,53 @@ async def resim_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uzanti = "." + (mesaj.document.file_name or "x.jpg").rsplit(".", 1)[-1].lower()
     else:
         return
+    onceki = resimler(mesaj.chat_id)
+    simdi = time.time()
     yol = oturum(mesaj.chat_id) / f"{mesaj.message_id:010d}{uzanti}"
     await dosya.download_to_drive(yol)
-    if len(resimler(mesaj.chat_id)) == 1:
-        await mesaj.reply_text("İlk görüntü alındı. Hepsini gönderince /hazirla yaz.")
+    if not onceki:
+        await mesaj.reply_text("İlk görüntü alındı. Hepsini gönderince /hazirla ya da /arastir ÜRÜN ADI yaz.")
+        return
+    en_yeni = max(p.stat().st_mtime for p in onceki)
+    if simdi - en_yeni > ESKI_GORUNTU_DK * 60:
+        # Uzun aradan sonra gelen görüntü: büyük ihtimalle yeni bir ürün. Eskilerle karışmasın diye sor.
+        dakika = int((simdi - en_yeni) // 60)
+        dugmeler = InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"🗑 Eski {len(onceki)} görüntüyü sil", callback_data=f"eski:sil:{int(simdi)}"),
+            InlineKeyboardButton("➕ Aynı ürün", callback_data="eski:tut")]])
+        await mesaj.reply_text(
+            f"Daha önce gönderdiğin {len(onceki)} görüntü bekliyor ({dakika} dk önce). "
+            "Yeni bir ürüne geçtiysen eskileri sil; aynı ürünse devam et.", reply_markup=dugmeler)
+
+
+async def eski_goruntu_secildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sorgu = update.callback_query
+    await sorgu.answer()
+    if not yetkili(update):
+        return
+    parcalar = sorgu.data.split(":")
+    if parcalar[1] == "sil" and len(parcalar) > 2:
+        sinir = int(parcalar[2]) - 1
+        silinen = 0
+        for p in resimler(update.effective_chat.id):
+            if p.stat().st_mtime < sinir:
+                p.unlink(missing_ok=True)
+                silinen += 1
+        kalan = len(resimler(update.effective_chat.id))
+        await sorgu.edit_message_text(f"{silinen} eski görüntü silindi. Şu an {kalan} görüntü var; "
+                                      "kalanları gönderince /hazirla ya da /arastir yaz.")
+    else:
+        await sorgu.edit_message_text("Tamam, hepsi aynı ürün için kullanılacak.")
 
 
 async def durum(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if yetkili(update):
-        n = len(resimler(update.effective_chat.id))
-        await update.message.reply_text(f"{n} görüntü bekliyor. Sıradaki dosya numarası: #{sonraki_no()}")
+        liste = resimler(update.effective_chat.id)
+        ek = ""
+        if liste:
+            dakika = int((time.time() - min(p.stat().st_mtime for p in liste)) // 60)
+            ek = f" (ilki {dakika} dk önce gönderildi; başka ürüne aitse /iptal yaz)"
+        await update.message.reply_text(f"{len(liste)} görüntü bekliyor{ek}. Sıradaki dosya numarası: #{sonraki_no()}")
 
 
 async def iptal(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -946,6 +987,7 @@ def main():
     uygulama.add_handler(CommandHandler("tekrar", tekrar_komutu))
     uygulama.add_handler(CommandHandler("link", link_komutu))
     uygulama.add_handler(CommandHandler("hiz", hiz_komutu))
+    uygulama.add_handler(CallbackQueryHandler(eski_goruntu_secildi, pattern=r"^eski:"))
     uygulama.add_handler(CommandHandler("muzik", muzik_komutu))
     uygulama.add_handler(CommandHandler("efekt", efekt_komutu))
     uygulama.add_handler(MessageHandler(filters.AUDIO | filters.Document.Category("audio/"), muzik_al))
