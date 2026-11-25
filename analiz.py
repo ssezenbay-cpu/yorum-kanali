@@ -363,9 +363,12 @@ def _gorsel_kutusu(deger):
     """{"goruntu": n, "kutu": [x1, y1, x2, y2]} biçimini doğrular; bozuksa None."""
     try:
         goruntu = int(deger["goruntu"])
-        x1, y1, x2, y2 = (min(1.0, max(0.0, float(v))) for v in deger["kutu"])
     except (TypeError, KeyError, ValueError):
         return None
+    try:
+        x1, y1, x2, y2 = (min(1.0, max(0.0, float(v))) for v in deger["kutu"])
+    except (TypeError, KeyError, ValueError):
+        x1, y1, x2, y2 = 0.0, 0.0, 1.0, 1.0  # kutu yoksa görüntünün tamamı (tam ürün fotoğrafı)
     if goruntu < 1 or x2 - x1 < 0.08 or y2 - y1 < 0.05:
         return None
     return {"goruntu": goruntu, "kutu": [x1, y1, x2, y2]}
@@ -460,20 +463,79 @@ def dogrula(veri, no):
     return veri
 
 
-EN_FAZLA_GORUNTU = 45  # ekran kaydından gelen kareler dahil
+EN_FAZLA_GORUNTU = 200  # ekran kaydından gelen kareler dahil; gruplar halinde okunur
+GRUP = 40               # bir istekte gönderilen görüntü sayısı
+
+
+def _grubu_birlestir(okuma, sonuc, kayma, grup_no):
+    """Sonraki görüntü grubunun okumasını öncekine ekler: konu kodları korunur, görüntü numaraları kaydırılır."""
+    kodlar = {str(k.get("kod")) for k in okuma.get("konular") or [] if isinstance(k, dict)}
+    ad_kod = {_sade(k.get("ad")): str(k.get("kod")) for k in okuma.get("konular") or [] if isinstance(k, dict)}
+    cevir = {}
+    for k in sonuc.get("konular") or []:
+        if not isinstance(k, dict):
+            continue
+        kod = str(k.get("kod") or "")
+        if _sade(k.get("ad")) in ad_kod:  # aynı ad: eski koda bağla
+            cevir[kod] = ad_kod[_sade(k.get("ad"))]
+        elif kod in kodlar:  # aynı kod başka konu için kullanılmış: çakışmasın
+            yeni_kod = f"G{grup_no}_{kod}"
+            cevir[kod] = yeni_kod
+            okuma["konular"].append(dict(k, kod=yeni_kod))
+        else:
+            cevir[kod] = kod
+            okuma["konular"].append(k)
+            kodlar.add(kod)
+    for y in sonuc.get("yorumlar") or []:
+        if not isinstance(y, dict):
+            continue
+        y["konular"] = [cevir.get(str(c), str(c)) for c in y.get("konular") or []]
+        if isinstance(y.get("g"), int):
+            y["g"] += kayma
+        okuma.setdefault("yorumlar", []).append(y)
+    for alan in ("urun_adi", "fiyat", "puan", "toplam_yorum", "satici", "site", "kategori"):
+        if not okuma.get(alan) and sonuc.get(alan):
+            okuma[alan] = sonuc[alan]
+    if not okuma.get("urun_gorseli") and isinstance(sonuc.get("urun_gorseli"), dict):
+        secim = dict(sonuc["urun_gorseli"])
+        secim["goruntu"] = int(secim.get("goruntu", 1)) + kayma
+        okuma["urun_gorseli"] = secim
+    okuma["urun_fotograflari"] = list(okuma.get("urun_fotograflari") or []) + [
+        int(n) + kayma for n in sonuc.get("urun_fotograflari") or [] if str(n).isdigit()]
+    okuma.setdefault("uyarilar", []).extend(sonuc.get("uyarilar") or [])
 
 
 def analiz_et(resimler, no, urun_adi=""):
-    """İki adım: 1) görüntülerdeki yorumlar tek tek listelenir, 2) kod sayar ve metin bu sayılarla yazılır.
-    urun_adi: kullanıcının /hazirla ile yazdığı marka ve model (görüntülerde ad yoksa)."""
+    """İki adım: 1) görüntülerdeki yorumlar tek tek listelenir (40'lık gruplar halinde), 2) kod sayar ve metin
+    bu sayılarla yazılır. urun_adi: kullanıcının /hazirla ile yazdığı marka ve model (görüntülerde ad yoksa)."""
     istemci = anthropic.Anthropic(api_key=A.ANTHROPIC_API_KEY)
     resimler = list(resimler)
-    icerik = [_resim_parcasi(r) for r in resimler[:EN_FAZLA_GORUNTU]]
-    istek = OKUMA_ISTEGI.format(n=len(icerik))
-    if urun_adi:
-        istek = f"Ürün (kullanıcı yazdı): {urun_adi}\n" + istek
-    icerik.append({"type": "text", "text": istek})
-    okuma = _iste(istemci, OKUMA_SISTEM.replace("{kanal}", A.KANAL_ADI), icerik, "Okuma")
+    okunacak = resimler[:EN_FAZLA_GORUNTU]
+    sistem = OKUMA_SISTEM.replace("{kanal}", A.KANAL_ADI)
+    okuma = None
+    for grup_no, bas in enumerate(range(0, len(okunacak), GRUP), 1):
+        parca = okunacak[bas:bas + GRUP]
+        icerik = [_resim_parcasi(r) for r in parca]
+        istek = OKUMA_ISTEGI.format(n=len(icerik))
+        if urun_adi:
+            istek = f"Ürün (kullanıcı yazdı): {urun_adi}\n" + istek
+        if okuma is not None:
+            onceki = json.dumps([{"kod": k.get("kod"), "ad": k.get("ad"), "yon": k.get("yon")}
+                                 for k in okuma.get("konular") or [] if isinstance(k, dict)], ensure_ascii=False)
+            istek = (f"Bu, aynı ürünün {grup_no}. görüntü grubu (görüntü numaraları bu gruba göre 1'den başlar). "
+                     f"Önceki gruplarda tanımlanan konular: {onceki}\n"
+                     "Aynı konular için AYNI kodu ve adı kullan; gerçekten yeni bir konu varsa yeni kod ver. "
+                     "Önceki gruplardaki bir yorumun devamı ya da tekrarı görünüyorsa yine yaz (program tekrarları ayıklar). "
+                     "Ürün sayfası bu grupta yoksa ürün bilgilerini boş, urun_gorseli null bırakabilirsin.\n\n" + istek)
+        icerik.append({"type": "text", "text": istek})
+        sonuc = _iste(istemci, sistem, icerik, f"Okuma {grup_no}")
+        if "hata" in sonuc and okuma is not None:
+            log.warning("Grup %d okunamadı: %s", grup_no, sonuc["hata"])
+            continue
+        if okuma is None:
+            okuma = sonuc
+        else:
+            _grubu_birlestir(okuma, sonuc, bas, grup_no)
     if urun_adi:
         okuma["urun_adi"] = urun_adi
     veri = senaryo_yaz(istemci, okuma, no)
