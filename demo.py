@@ -46,11 +46,11 @@ def demo_uret():
         "urun_gorseli": {"goruntu": 1, "kutu": [0.13, 0.12, 0.87, 0.65]},
         "senaryo": {
             "acilis": "Okuduğum 40 yorumun 15'i aynı şeyden şikâyet ediyor.",
-            "baglam": "Su geçirmez kışlık bot, 1.299 TL, puanı 4,2. 2.140 değerlendirmeden 40 yorumu okudum.",
+            "baglam": "40 yorum okudum, hepsi ürünü anlatıyor. Hüküm sonda.",
             "ovgu": "22 alıcı sıcak tuttuğunu, 14 alıcı kaymadığını söylüyor.",
             "sikayet": "Ama asıl sorun kalıp. 15 kişi dar geldiğini yazmış, 6 kişi bağcıktan şikâyetçi.",
             "hukum": "Hüküm: dikkatli al. Ayağın genişse bir numara büyük seç.",
-            "kapanis": "Link profilde. Yorum dosyası #0.",
+            "kapanis": "Sıradaki ürün ne olsun? Yorumlara yaz. Yorum dosyası #0.",
         },
         "baslik": "Bu botu almadan önce 40 yoruma baktım",
         "aciklama": "Demo.",

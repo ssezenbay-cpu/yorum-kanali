@@ -1,6 +1,8 @@
 """ElevenLabs ile senaryoyu senin ses klonunla seslendirir; altyazı için zaman bilgisini de alır."""
 import base64
+import logging
 import subprocess
+from pathlib import Path
 
 import requests
 
@@ -8,19 +10,32 @@ import ayarlar as A
 from ayarlar import FFMPEG
 
 URL = "https://api.elevenlabs.io/v1/text-to-speech/{ses}/with-timestamps"
+EL_UST_HIZ = 1.15  # ElevenLabs'in kendi hız ayarını bunun üstüne çıkarmıyoruz; kalanını ffmpeg ile hızlandırıyoruz
+log = logging.getLogger("ses")
 
 
 class SesHatasi(Exception):
     pass
 
 
-def _istek(metin, normalizasyon_kapali=True):
+def hiz_carpani():
+    """/hiz ile ayarlanan konuşma hızı (1.0 = sesin kendi hızı)."""
+    try:
+        hiz = float(str(A.SES_HIZI).replace(",", "."))
+    except ValueError:
+        hiz = 1.25
+    return max(0.8, min(1.6, hiz))
+
+
+def _istek(metin, normalizasyon_kapali=True, hiz=1.0):
     govde = {
         "text": metin,
         "model_id": A.ELEVENLABS_MODEL,
         "voice_settings": {"stability": 0.45, "similarity_boost": 0.85,
                            "style": 0.15, "use_speaker_boost": True},
     }
+    if abs(hiz - 1) > 0.001:
+        govde["voice_settings"]["speed"] = round(hiz, 2)
     if normalizasyon_kapali:
         # Sayıları biz Türkçe yazıya çeviriyoruz; ElevenLabs'in kendi (İngilizce) çevirisi karışmasın
         govde["apply_text_normalization"] = "off"
@@ -34,23 +49,40 @@ def _istek(metin, normalizasyon_kapali=True):
 
 
 def seslendir(metin, hedef):
-    yanit = _istek(metin)
+    hedef = Path(hedef)
+    istenen = hiz_carpani()
+    el_hiz = min(EL_UST_HIZ, istenen) if istenen >= 1 else max(0.7, istenen)
+    yanit = _istek(metin, hiz=el_hiz)
+    if yanit.status_code in (400, 422) and "speed" in yanit.text.lower():
+        log.warning("ElevenLabs hız ayarını kabul etmedi; hızlandırma ffmpeg ile yapılacak")
+        el_hiz = 1.0
+        yanit = _istek(metin, hiz=el_hiz)
     if yanit.status_code in (400, 422) and "normalization" in yanit.text:
-        yanit = _istek(metin, normalizasyon_kapali=False)
+        yanit = _istek(metin, normalizasyon_kapali=False, hiz=el_hiz)
     if yanit.status_code == 401:
         raise SesHatasi("ElevenLabs anahtarı geçersiz. Telegram'da /elevenlabs komutuyla yenisini gir.")
     if yanit.status_code != 200:
         raise SesHatasi(f"ElevenLabs hata verdi ({yanit.status_code}): {yanit.text[:300]}")
     veri = yanit.json()
-    with open(hedef, "wb") as dosya:
-        dosya.write(base64.b64decode(veri["audio_base64"]))
     hizalama = veri.get("alignment") or veri.get("normalized_alignment")
     if not hizalama:
         raise SesHatasi("ElevenLabs zaman bilgisini göndermedi.")
+    ses = base64.b64decode(veri["audio_base64"])
+    kalan = istenen / el_hiz
+    if abs(kalan - 1) > 0.01:
+        # Kalan hızlandırma: ffmpeg atempo sesin tonunu değiştirmeden hızlandırır; zamanlar da aynı oranda kısalır
+        ham = hedef.with_name(hedef.stem + "_ham.mp3")
+        ham.write_bytes(ses)
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(ham), "-filter:a", f"atempo={kalan:.4f}",
+                        "-c:a", "libmp3lame", "-b:a", "160k", str(hedef)], check=True)
+        ham.unlink(missing_ok=True)
+    else:
+        kalan = 1.0
+        hedef.write_bytes(ses)
     return {
         "karakterler": hizalama["characters"],
-        "baslangic": hizalama["character_start_times_seconds"],
-        "bitis": hizalama["character_end_times_seconds"],
+        "baslangic": [z / kalan for z in hizalama["character_start_times_seconds"]],
+        "bitis": [z / kalan for z in hizalama["character_end_times_seconds"]],
     }
 
 

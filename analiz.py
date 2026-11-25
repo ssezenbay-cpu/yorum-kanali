@@ -12,6 +12,7 @@ import ayarlar as A
 from veriler import GRUPLAR, fiyat_sayi
 
 ROLLER = ["acilis", "baglam", "ovgu", "sikayet", "hukum", "kapanis"]
+SENARYO_SURUMU = 4  # kurallar değişince artar; /tekrar eski metni görünce analizi yeniler
 HUKUMLER = {"ALINIR", "ALINMAZ", "DİKKATLİ AL"}
 log = logging.getLogger("analiz")
 YASAK_IFADELER = ["denedim", "kullandım", "test ettim", "aldım ve", "bende de"]
@@ -38,7 +39,7 @@ Kesin kurallar:
 7. Sağlık, tedavi veya güvenlik iddiası yapma.
 8. Hüküm: şikâyetler ürünün temel işlevini bozuyorsa veya ürünü anlatan yorumların yarısına yakınındaysa "ALINMAZ"; övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL".
 9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 45-60 kelime (20-28 saniye).
-   Fiyatı, puanı ve toplam değerlendirme sayısını sesli okuma; bunlar ekranda küçük etiket olarak görünür. Bağlam bölümü tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı.
+   Fiyatı, puanı ve toplam değerlendirme sayısını sesli okuma; bunlar ekranda küçük etiket olarak görünür. Bağlam bölümü tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı; sonuna "Hüküm sonda." ekle (izleyici sonunu merak etsin).
    Dürüst oran: azınlıktaki bir bulguya "çoğu", "herkes", "neredeyse hepsi" deme; sayıyı söyle ("46 yorumdan 6'sı"). Ürünü anlatan yorum 30'dan azsa hükmü temkinli kur ve "okuduğum yorumlara göre" de.
    Kapanış: "Sıradaki ürün ne olsun? Yorumlara yaz." gibi izleyiciyi yorum yazmaya çağıran tek cümle ve "Yorum dosyası #N".
    Açılış (acilis ve ekran_acilis) yorumlardaki EN ŞAŞIRTICI somut bulgudur ve bir rakam içerir, ör. "1.839 liralık termosta 6 kişi garanti kodunu bulamadı". Hükmü açılışta söyleme; hüküm sona kalsın ki izleyici merak etsin.
@@ -67,7 +68,7 @@ SEMA = """{{
   "urun_gorseli": {{"goruntu": 1, "kutu": [0.0, 0.0, 1.0, 1.0]}},
   "senaryo": {{
     "acilis": "...",
-    "baglam": "tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı",
+    "baglam": "tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı, ardından: Hüküm sonda.",
     "ovgu": "en çok övülen iki şey, sayılarıyla",
     "sikayet": "en çok şikâyet edilen iki şey, sayılarıyla; 'ama asıl sorun' gibi merak cümlesiyle",
     "hukum": "hüküm ve kime uygun",
@@ -206,6 +207,7 @@ def dogrula(veri, no):
     veri["kime_uygun"] = str(veri.get("kime_uygun") or "").strip()
     veri["etiketler"] = [str(e).lstrip("#").replace(" ", "") for e in (veri.get("etiketler") or [])][:8]
     veri["uyarilar"] = uyarilar
+    veri["surum"] = SENARYO_SURUMU
     return veri
 
 

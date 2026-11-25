@@ -22,13 +22,13 @@ import ayarlar as A
 import arastirma
 import okunus
 import urun_avi
-from analiz import ROLLER, AnalizHatasi, analiz_et, anthropic_dogrula
+from analiz import ROLLER, SENARYO_SURUMU, AnalizHatasi, analiz_et, anthropic_dogrula
 from demo import demo_uret
 from ayarlar import (CALISMA, CIKTI, GELEN, KOK, TELEGRAM_PROXY, TELEGRAM_TOKEN, eksik_ayarlar,
                      maskele, no_kaydet, sonraki_no)
-from ses import SesHatasi, sesleri_listele, seslendir
+from ses import SesHatasi, hiz_carpani, sesleri_listele, seslendir
 from veriler import rapor_metni, sonuc_kaydet, video_kaydet
-from video import kapak_uret, videoyu_kurgula
+from video import TEMALAR, kapak_uret, videoyu_kurgula
 
 try:
     from zoneinfo import ZoneInfo
@@ -66,7 +66,9 @@ YARDIM = (
     "/ses – kullanılacak ses klonunu seçtirir\n"
     "/anthropic ANAHTAR – Anthropic anahtarını kaydeder\n"
     "/kanal AD – videolardaki kanal adını değiştirir\n"
-    "/link ac | kapat – 'link profilde' yazısını açar/kapatır (link ekleyince aç)\n\n"
+    "/link ac | kapat – 'link profilde' yazısını açar/kapatır (link ekleyince aç)\n"
+    "/hiz 1.25 – konuşma hızını ayarlar (1 = sesin kendi hızı, 1.2-1.35 arası Shorts için iyi)\n"
+    "/tema – videonun görünümünü seçtirir (canlı renk, açık stüdyo, sarı)\n\n"
     "Bakım:\n"
     "/guncelle – GitHub'dan son sürümü alıp kendini günceller\n"
     "/kayit – botun son kayıtlarını gösterir\n"
@@ -134,6 +136,8 @@ def ayar_ozeti():
         f"{'✅' if A.ELEVENLABS_VOICE_ID else '❌'} Ses: "
         f"{A._al('ELEVENLABS_SES_ADI') or A.ELEVENLABS_VOICE_ID or 'seçilmedi'}",
         f"Kanal adı: {A.KANAL_ADI}",
+        f"Konuşma hızı: {hiz_carpani():.2f} (/hiz)",
+        f"Görünüm: {TEMALAR.get(A.VIDEO_TEMA, A.VIDEO_TEMA)} (/tema)",
     ]
     if not A.ELEVENLABS_API_KEY:
         satirlar.append("\nSıradaki adım: /elevenlabs ANAHTAR yaz (ElevenLabs → Developers → API Keys).")
@@ -274,6 +278,51 @@ async def link_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"'Link profilde' yazısı: {durum}.\n"
         "Satış ortaklığı linkini profiline ekleyince /link ac yaz; o zamana kadar kapalı kalsın.")
+
+
+async def hiz_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/hiz 1.3: seslendirmenin hızını ayarlar."""
+    if not yetkili(update):
+        return
+    if context.args:
+        try:
+            deger = float(context.args[0].replace(",", "."))
+        except ValueError:
+            deger = 0
+        if not 0.8 <= deger <= 1.6:
+            await update.message.reply_text("0.8 ile 1.6 arasında bir sayı yaz. Örnek: /hiz 1.3")
+            return
+        A.kaydet("SES_HIZI", f"{deger:.2f}")
+    await update.message.reply_text(
+        f"Konuşma hızı: {hiz_carpani():.2f}\n"
+        "1 = ses klonunun kendi hızı. Shorts için 1.2-1.35 arası iyi; 1.4 üstü yapay duyulabilir.\n"
+        "Son videoyu bu hızla yeniden yapmak için: /tekrar NO")
+
+
+async def tema_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/tema: videonun görünümünü düğmelerle seçtirir; /tema acik gibi doğrudan da yazılabilir."""
+    if not yetkili(update):
+        return
+    secim = (context.args[0].lower() if context.args else "")
+    secim = {"canlı": "canli", "açık": "acik", "sarı": "sari"}.get(secim, secim)
+    if secim in TEMALAR:
+        A.kaydet("VIDEO_TEMA", secim)
+        await update.message.reply_text(f"Görünüm: {TEMALAR[secim]}. Mevcut videoyu bununla yapmak için: /tekrar NO")
+        return
+    dugmeler = InlineKeyboardMarkup([[InlineKeyboardButton(
+        ("✅ " if A.VIDEO_TEMA == ad else "") + baslik, callback_data=f"tema:{ad}")] for ad, baslik in TEMALAR.items()])
+    await update.message.reply_text("Videoların görünümü:", reply_markup=dugmeler)
+
+
+async def tema_secildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sorgu = update.callback_query
+    await sorgu.answer()
+    if not yetkili(update):
+        return
+    ad = sorgu.data.split(":", 1)[1]
+    if ad in TEMALAR:
+        A.kaydet("VIDEO_TEMA", ad)
+        await sorgu.edit_message_text(f"Görünüm: {TEMALAR[ad]}. Mevcut videoyu bununla yapmak için: /tekrar NO")
 
 
 async def kayit_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -675,6 +724,14 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"#{no} için kayıtlı analiz yok. Görüntüler duruyorsa: /tekrar {no} tam")
         return
     veri = json.loads(analiz_yolu.read_text(encoding="utf-8")) if not tam else None
+    if veri is not None and veri.get("surum", 0) < SENARYO_SURUMU:
+        if gorseller:
+            tam, veri = True, None
+            await update.message.reply_text(
+                f"#{no} metni eski kurallarla yazılmıştı (uzun, fiyatı okuyordu). Yeni kısa metin yazılıyor.")
+        else:
+            await update.message.reply_text(
+                f"#{no} metni eski kurallarla yazılmış ve kayıtlı görüntü yok. Yeni metin için: /arastir ÜRÜN ADI")
     kilit = context.application.bot_data.setdefault("uretim_kilidi", asyncio.Lock())
     if kilit.locked():
         await update.message.reply_text("Şu an bir video hazırlanıyor; o bitince tekrar dene.")
@@ -808,6 +865,9 @@ def main():
     uygulama.add_handler(CommandHandler("okunus", okunus_komutu))
     uygulama.add_handler(CommandHandler("tekrar", tekrar_komutu))
     uygulama.add_handler(CommandHandler("link", link_komutu))
+    uygulama.add_handler(CommandHandler("hiz", hiz_komutu))
+    uygulama.add_handler(CommandHandler("tema", tema_komutu))
+    uygulama.add_handler(CallbackQueryHandler(tema_secildi, pattern=r"^tema:"))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("zip"), guncelleme_al))
     uygulama.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, resim_al))

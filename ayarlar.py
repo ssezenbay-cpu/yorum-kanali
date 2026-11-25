@@ -25,6 +25,8 @@ KANAL_ADI = _al("KANAL_ADI", "Yorumları Okudum")
 GITHUB_DEPO = _al("GITHUB_DEPO", "ssezenbay-cpu/yorum-kanali")
 LINK_PROFILDE = _al("LINK_PROFILDE")  # satış ortaklığı linki profile eklenince "1" yapılır (/link ac)
 GITHUB_DAL = _al("GITHUB_DAL", "main")
+VIDEO_TEMA = _al("VIDEO_TEMA", "canli")  # canli | acik | sari | koyu  (/tema)
+SES_HIZI = _al("SES_HIZI", "1.25")       # seslendirme hızı çarpanı (/hiz)
 FFMPEG = _al("FFMPEG_YOLU", "ffmpeg") or "ffmpeg"
 
 CALISMA = KOK / "calisma"
