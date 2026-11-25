@@ -127,7 +127,6 @@ Kesin kurallar:
    Güvenlik riski taşıyan bir şikâyet (sap/kulp kopması, kırılma, yanma, erime, elektrik, aşırı ısınma, patlama,
    keskin kenar) ürünü anlatan yorumların %8'inden fazlasında geçiyorsa hüküm "ALINIR" olamaz.
 6. Dürüst oran: azınlıktaki bir bulguya "çoğu", "herkes", "neredeyse hepsi" deme; sayıyı söyle.
-   İstisna: 31 sayısını sesli metinde söyleme (Türkçede argo şakaya döner); "otuzu aşkın" de. Ekranda 31 yazmaya devam eder.
 7. Konuşur gibi yaz. Toplam 40-50 kelime. Her cümle kısa, en fazla 9 kelime; yan cümle yok.
    Fiyatı ve toplam değerlendirme sayısını söyleme; ekranda yazıyor. Puanı yalnızca açılıştaki çelişki için kullanabilirsin.
 8. Bölümler:
@@ -379,8 +378,6 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi="", zorunlu_h
     if not veri["senaryo"]:
         raise AnalizHatasi("Metin yazılamadı. Tekrar dene.")
     veri = dogrula(veri, no)
-    for rol in ROLLER:  # 31 sesli söylenmesin (argo şakaya döner); ekrandaki çubukta 31 yazmaya devam eder
-        veri["senaryo"][rol] = re.sub(r"\b31(?=\s)", "otuzu aşkın", veri["senaryo"][rol])
     if sayim["urun_yorumu"] < 100 and "kesin" not in veri["senaryo"]["hukum"].lower():
         veri["senaryo"]["hukum"] = veri["senaryo"]["hukum"].rstrip(" .") + ". Yorum az, sonuç kesin değil."
     izinli = {sayim["okunan_yorum"], sayim["urun_yorumu"], no} | {k["sayi"] for k in sayim["konular"]}

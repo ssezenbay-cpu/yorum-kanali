@@ -81,6 +81,14 @@ def _sayi_metni(sayi):
     return sayi_oku(int(sayi))
 
 
+def sayi_duzelt(okunan, sozluk_):
+    """Sözlükte sayı için kayıtlı okunuş varsa uygular: 31 = otuzbir -> "yüz otuz bir" -> "yüz otuzbir"."""
+    sayilar = [(sayi_oku(int(k)), v) for k, v in sozluk_.items() if re.fullmatch(r"\d{1,9}", k) and v]
+    for yazi, yerine in sorted(sayilar, key=lambda x: -len(x[0])):
+        okunan = re.sub(r"(?<!\S)" + re.escape(yazi) + r"(?!\S)", yerine, okunan)
+    return okunan
+
+
 def sozluk():
     veri = dict(VARSAYILAN)
     try:
@@ -155,7 +163,7 @@ def kelime_oku(kelime, onceki_sayi=False, sozluk_=None):
     eslesme = SAYI.match(govde)
     if eslesme:
         onek, sayi, ek = eslesme.group("on"), eslesme.group("sayi"), eslesme.group("ek")
-        okunan = _sayi_metni(sayi)
+        okunan = sayi_duzelt(_sayi_metni(sayi), sozluk_)
         if onek == "%":
             okunan = "yüzde " + okunan
         elif onek == "₺":
@@ -165,6 +173,8 @@ def kelime_oku(kelime, onceki_sayi=False, sozluk_=None):
         if birim.lower() in BIRIMLER:  # 500ml, 2L, 1.299TL'lik
             birim_okunus = BIRIMLER[birim.lower()]
             return on_nokta + okunan + " " + birim_okunus + ek_uyumla(birim_okunus, birim_eki) + arka
+        if ek_temiz[:1].lower() in UNLU and okunan.endswith("dört"):  # 34'ü -> otuz dördü
+            okunan = okunan[:-1] + "d"
         return on_nokta + okunan + ek_temiz + arka  # 46'sı -> kırk altısı
 
     # Sözlük: marka ve kısaltmalar, ekleriyle (TL'lik -> liralık, Stanley'nin -> Stenlinin)

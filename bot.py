@@ -68,7 +68,7 @@ YARDIM = (
     "/sonuc NO İZLENME TIKLAMA [KAZANÇ] – videonun sonucunu kaydeder (ör. /sonuc 3 12000 40 350)\n"
     "/rapor – hangi ürün grubunun daha iyi gittiğini gösterir\n"
     "/demo – API kullanmadan sessiz örnek video yapar\n"
-    "/okunus KELİME = OKUNUŞ – yanlış okunan kelimeyi düzeltir (ör. /okunus Dreame = Drim)\n"
+    "/okunus KELİME = OKUNUŞ – yanlış okunan kelimeyi düzeltir (ör. /okunus Dreame = Drim)\n"    "/dene 31 – bir sayının ya da cümlenin okunuşunu dinletir; doğru olanı seçersin\n"
     "/tekrar NO – videonun sesini ve kurgusunu yeniden yapar; /tekrar NO tam analizi de yeniler\n\n"
     "Ayarlar:\n"
     "/ayarlar – hangi ayarların tamam olduğunu gösterir\n"
@@ -969,6 +969,7 @@ async def okunus_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Yanlış okunan bir kelimeyi düzeltmek için:\n/okunus Stanley = Stenli\n"
             "Silmek için: /okunus sil Stanley\n\n"
             "Sayılar (1.839 TL, 4,6, 46'sı), %, QR gibi kısaltmalar zaten Türkçe okunuyor.\n"
+            "Bir sayı yanlış okunuyorsa: /dene 31 ile dinle ve doğru yazılışı seç (ya da /okunus 31 = otuzbir).\n"
             "Düzelttikten sonra videonun sesini yenilemek için: /tekrar DOSYA_NO\n"
             "Analizi de baştan yaptırmak için: /tekrar DOSYA_NO tam\n\n"
             f"Senin eklediklerin:\n{liste}")
@@ -988,6 +989,84 @@ async def okunus_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     okunus.sozluge_ekle(kelime, okunan)
     ornek = okunus.konusma_metni([f"{kelime} ürünü"])
     await update.message.reply_text(f"Kaydedildi: {kelime} → {okunan}\nÖrnek okunuş: {ornek}")
+
+
+DENEME_CUMLESI = "{} kişi kullanışlı diyor."
+
+
+def _deneme_secenekleri(metin):
+    """/dene 31 -> sayının farklı yazılışları; /dene a | b -> verilenler; /dene cümle -> o cümle."""
+    if "|" in metin:
+        return [(p.strip(), None) for p in metin.split("|") if p.strip()][:4]
+    if re.fullmatch(r"\d{1,9}", metin):
+        temel = okunus.sayi_oku(int(metin))
+        yazilislar = [temel]
+        for y in (temel.replace(" ", ""), temel.replace(" ", "-")):
+            if y not in yazilislar:
+                yazilislar.append(y)
+        return [(DENEME_CUMLESI.format(y), y) for y in yazilislar]
+    return [(metin, None)]
+
+
+async def dene_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/dene 31 | /dene METİN: kısa bir parçayı seslendirip gönderir; okunuşu kulakla kontrol etmek için."""
+    if not yetkili(update):
+        return
+    metin = " ".join(context.args).strip()
+    if not metin:
+        await update.message.reply_text(
+            "Bir sayının ya da cümlenin nasıl okunduğunu dinlemek için:\n"
+            "/dene 31 – sayıyı 2-3 farklı yazılışla okur, doğru olanı seçersin\n"
+            "/dene 34'ü sapı sorunlu buluyor – cümleyi videodaki gibi okur\n"
+            "/dene otuz bir kişi | otuzbir kişi – kendi denemelerini | ile ayır\n"
+            "Her deneme birkaç kuruşluk ElevenLabs karakteri harcar.")
+        return
+    if not (A.ELEVENLABS_API_KEY and A.ELEVENLABS_VOICE_ID):
+        await update.message.reply_text("Önce /elevenlabs ANAHTAR ile ElevenLabs anahtarını gir, sonra /ses ile sesini seç.")
+        return
+    secenekler = _deneme_secenekleri(metin)
+    klasor = CALISMA / "deneme"
+    klasor.mkdir(parents=True, exist_ok=True)
+    durum = await update.message.reply_text(f"{len(secenekler)} deneme seslendiriliyor…")
+    for sira, (cumle, _) in enumerate(secenekler, 1):
+        konusma = okunus.konusma_metni([cumle])
+        yol = klasor / f"deneme_{sira}.mp3"
+        try:
+            await asyncio.to_thread(seslendir, konusma, yol)
+        except SesHatasi as hata:
+            await durum.edit_text(str(hata))
+            return
+        except Exception as hata:  # ağ hatası vb.
+            log.exception("deneme seslendirme hatası")
+            await durum.edit_text(f"Seslendirilemedi: {hata}")
+            return
+        with yol.open("rb") as dosya:
+            await update.message.reply_audio(dosya, title=f"{sira}) {konusma}"[:60], performer="Okunuş denemesi",
+                                             filename=f"deneme_{sira}.mp3")
+    await durum.delete()
+    if re.fullmatch(r"\d{1,9}", metin) and len(secenekler) > 1:
+        dugmeler = [[InlineKeyboardButton(f"{s}) {y}" + (" (şimdiki)" if s == 1 else ""), callback_data=f"oku:{metin}:{s}")]
+                    for s, (_, y) in enumerate(secenekler, 1)]
+        kayitli = okunus.kullanici_sozlugu().get(metin)
+        not_ = f"\nŞu an kayıtlı okunuş: {kayitli}" if kayitli else ""
+        await update.message.reply_text(f"Hangisi doğru okunuyor? Seçtiğin bundan sonraki tüm videolarda kullanılır.{not_}",
+                                        reply_markup=InlineKeyboardMarkup(dugmeler))
+
+
+async def okunus_secildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sorgu = update.callback_query
+    await sorgu.answer()
+    if not yetkili(update):
+        return
+    _, sayi, sira = sorgu.data.split(":")
+    secenekler = _deneme_secenekleri(sayi)
+    sira = int(sira)
+    if not 1 <= sira <= len(secenekler):
+        return
+    yazilis = secenekler[sira - 1][1]
+    okunus.sozluge_ekle(sayi, "" if sira == 1 else yazilis)
+    await sorgu.edit_message_text(f"Tamam: {sayi} artık “{yazilis}” diye yazılıp seslendirilecek.\n"
+                                  "Mevcut videoya uygulamak için: /tekrar NO")
 
 
 async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1233,6 +1312,8 @@ def main():
     uygulama.add_handler(MessageHandler(filters.VIDEO | filters.Document.Category("video/"), kayit_al))
     uygulama.add_handler(CommandHandler("tema", tema_komutu))
     uygulama.add_handler(CallbackQueryHandler(tema_secildi, pattern=r"^tema:"))
+    uygulama.add_handler(CommandHandler("dene", dene_komutu))
+    uygulama.add_handler(CallbackQueryHandler(okunus_secildi, pattern=r"^oku:"))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("zip"), guncelleme_al))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("json"), paket_al))
