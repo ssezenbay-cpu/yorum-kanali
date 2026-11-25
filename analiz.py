@@ -2,6 +2,7 @@
 import base64
 import io
 import json
+import logging
 import re
 
 import anthropic
@@ -12,6 +13,7 @@ from veriler import GRUPLAR, fiyat_sayi
 
 ROLLER = ["acilis", "baglam", "ovgu", "sikayet", "hukum", "kapanis"]
 HUKUMLER = {"ALINIR", "ALINMAZ", "DİKKATLİ AL"}
+log = logging.getLogger("analiz")
 YASAK_IFADELER = ["denedim", "kullandım", "test ettim", "aldım ve", "bende de"]
 
 
@@ -90,13 +92,23 @@ def _resim_parcasi(yol):
 
 
 def _json_cikar(metin):
-    eslesme = re.search(r"\{.*\}", metin, re.S)
+    eslesme = re.search(r"\{.*\}", metin or "", re.S)
     if not eslesme:
         raise AnalizHatasi("Yapay zekâ geçerli bir yanıt vermedi. Tekrar dene.")
+    ham = eslesme.group(0)
     try:
-        return json.loads(eslesme.group(0))
+        return json.loads(ham)
+    except json.JSONDecodeError:
+        pass
+    try:  # sık görülen küçük bozukluklar: sondaki virgüller
+        return json.loads(re.sub(r",\s*([}\]])", r"\1", ham))
     except json.JSONDecodeError as hata:
         raise AnalizHatasi(f"Yanıt okunamadı ({hata}). Tekrar dene.") from hata
+
+
+DUZELT = ("Yanıtın istenen JSON değildi ya da yarım kaldı. Aynı analizi yalnızca istenen JSON nesnesi olarak "
+          "ver; metinleri kısa tut, JSON dışında hiçbir şey yazma. Görüntülerde ürün sayfası ya da yorum yoksa "
+          'yalnızca {"hata": "kısa açıklama"} döndür.')
 
 
 def dogrula(veri, no):
@@ -183,14 +195,28 @@ def analiz_et(resimler, no):
     resimler = list(resimler)
     icerik = [_resim_parcasi(r) for r in resimler[:EN_FAZLA_GORUNTU]]
     icerik.append({"type": "text", "text": KULLANICI.format(n=len(icerik), no=no)})
-    yanit = istemci.messages.create(
-        model=A.CLAUDE_MODEL,
-        max_tokens=2500,
-        system=SISTEM.replace("{kanal}", A.KANAL_ADI),
-        messages=[{"role": "user", "content": icerik}],
-    )
-    metin = "".join(getattr(b, "text", "") for b in yanit.content)
-    veri = dogrula(_json_cikar(metin), no)
+    mesajlar = [{"role": "user", "content": icerik}]
+    for deneme in range(2):
+        yanit = istemci.messages.create(
+            model=A.CLAUDE_MODEL,
+            max_tokens=6000,
+            system=SISTEM.replace("{kanal}", A.KANAL_ADI),
+            messages=mesajlar,
+        )
+        metin = "".join(getattr(b, "text", "") for b in yanit.content)
+        log.info("Analiz yanıtı: durum=%s, %d karakter, %d görüntü", yanit.stop_reason, len(metin), len(icerik) - 1)
+        try:
+            ham = _json_cikar(metin)
+            break
+        except AnalizHatasi:
+            log.warning("Analiz JSON vermedi (durum=%s): %s", yanit.stop_reason, metin[-1500:] or "(boş)")
+            if deneme == 1:
+                raise AnalizHatasi(f"Yapay zekâ geçerli bir yanıt vermedi (durum: {yanit.stop_reason}). "
+                                   "Ayrıntı için /kayit yaz.")
+            if yanit.content:
+                mesajlar.append({"role": "assistant", "content": yanit.content})
+            mesajlar.append({"role": "user", "content": DUZELT})
+    veri = dogrula(ham, no)
     if len(resimler) > EN_FAZLA_GORUNTU:
         veri["uyarilar"].append(f"{len(resimler)} görüntü gönderildi; ilk {EN_FAZLA_GORUNTU} tanesi okundu.")
     return veri
