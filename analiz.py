@@ -27,6 +27,7 @@ Kesin kurallar:
 1. Hiçbir bilgi uydurma. Fiyat, puan veya toplam yorum sayısı okunamıyorsa boş bırak ve "uyarilar" listesine yaz.
 2. "okunan_yorum" = görüntülerde metnini gerçekten okuyabildiğin yorum sayısı. Sitenin kendi "Değerlendirme Özeti" gibi yapay zekâ özetleri, puan dağılımı grafikleri ve satıcı bilgileri yorum değildir: sayılmaz, övgü ya da şikâyet kaynağı olarak kullanılmaz.
 3. Ürünü anlatmayan yorumlar sayılmaz: kargo hızı, paketleme, satıcının ilgisi, "güler yüzlü", "teşekkürler", "tavsiye ederim" gibi tek başına bilgi vermeyen yorumlar ne övgü ne şikâyettir. Ürünün kendisini ilgilendirenler sayılır: kırık, eksik ya da taklit gelmesi, beden/kalıp, malzeme, performans, dayanıklılık.
+   Bir görüntüde birden fazla yorum olabilir; hepsini oku. Ekran görüntüleri üst üste binebilir: aynı yorum (aynı tarih, aynı metin) birden fazla görüntüde görünüyorsa bir kez say.
    "urun_yorumu" = okunan yorumlardan ürünün kendisi hakkında bilgi veren yorum sayısı. Övgü ve şikâyet sayıları yalnızca bunların içinden sayılır ve urun_yorumu'nu geçemez.
 4. Senaryoda rakamlar örneklemden verilir: "ürünü anlatan 30 yorumun 12'si" gibi. Bağlam bölümünde kaç yorum okunduğunu ve kaçının ürünü anlattığını söyle (ör. "40 yorum okudum, 30'u ürünü anlatıyordu"). "Binlerce yorum", "herkes" gibi abartı yok.
 5. Ürünü sen kullanmadın: "denedim", "kullandım", "test ettim" gibi ifadeler yasak. "Alıcılar", "yorumlara göre" de.
@@ -174,9 +175,13 @@ def dogrula(veri, no):
     return veri
 
 
+EN_FAZLA_GORUNTU = 30
+
+
 def analiz_et(resimler, no):
     istemci = anthropic.Anthropic(api_key=A.ANTHROPIC_API_KEY)
-    icerik = [_resim_parcasi(r) for r in list(resimler)[:20]]
+    resimler = list(resimler)
+    icerik = [_resim_parcasi(r) for r in resimler[:EN_FAZLA_GORUNTU]]
     icerik.append({"type": "text", "text": KULLANICI.format(n=len(icerik), no=no)})
     yanit = istemci.messages.create(
         model=A.CLAUDE_MODEL,
@@ -185,7 +190,10 @@ def analiz_et(resimler, no):
         messages=[{"role": "user", "content": icerik}],
     )
     metin = "".join(getattr(b, "text", "") for b in yanit.content)
-    return dogrula(_json_cikar(metin), no)
+    veri = dogrula(_json_cikar(metin), no)
+    if len(resimler) > EN_FAZLA_GORUNTU:
+        veri["uyarilar"].append(f"{len(resimler)} görüntü gönderildi; ilk {EN_FAZLA_GORUNTU} tanesi okundu.")
+    return veri
 
 
 def anthropic_dogrula(anahtar):
