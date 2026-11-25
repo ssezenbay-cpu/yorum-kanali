@@ -1009,7 +1009,8 @@ class Kurgu:
         c = ImageDraw.Draw(resim)
         p = self.p
         dx = self._kaydir(t)
-        alt = [f"{A.KANAL_ADI} · Yorum dosyası #{self.no}"]
+        alt = [f"{A.KANAL_ADI} #{self.no}" if "dosya" in A.KANAL_ADI.lower()
+               else f"{A.KANAL_ADI} · Yorum dosyası #{self.no}"]
         if A.LINK_PROFILDE:
             alt.append("Link profilde · satış ortaklığı linki")
         ust = ICERIK_Y + 20
