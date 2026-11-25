@@ -27,7 +27,8 @@ import ekran_kaydi
 import miksaj
 import okunus
 import urun_avi
-from analiz import ROLLER, SENARYO_SURUMU, AnalizHatasi, analiz_et, anthropic_dogrula, sayim_metni
+from analiz import (ROLLER, SENARYO_SURUMU, AnalizHatasi, analiz_et, analiz_metinden, anthropic_dogrula,
+                    paketi_dogrula, sayim_metni)
 from demo import demo_uret
 from ayarlar import (CALISMA, CIKTI, GELEN, KOK, TELEGRAM_PROXY, TELEGRAM_TOKEN, eksik_ayarlar,
                      maskele, no_kaydet, sonraki_no)
@@ -607,6 +608,58 @@ async def _eski_goruntu_sor(mesaj, onceki, simdi):
             "Yeni bir ürüne geçtiysen eskileri sil; aynı ürünse devam et.", reply_markup=dugmeler)
 
 
+def paket_yolu(chat_id):
+    return GELEN / f"paket_{chat_id}.json"
+
+
+def _foto_indir(adres, hedef):
+    """Paketteki ürün fotoğrafını indirir (yalnızca https ve resim, en fazla 8 MB)."""
+    if not str(adres).startswith("https://"):
+        return False
+    yanit = requests.get(adres, timeout=25, headers={"User-Agent": "Mozilla/5.0"}, stream=True)
+    if yanit.status_code != 200 or not yanit.headers.get("Content-Type", "").startswith("image/"):
+        return False
+    veri = yanit.raw.read(8 * 1024 * 1024 + 1, decode_content=True)
+    if len(veri) > 8 * 1024 * 1024:
+        return False
+    hedef.write_bytes(veri)
+    return True
+
+
+async def paket_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Yorum paketi (yorumlar.json): Claude'un bilgisayardaki Chrome'dan okuduğu yorumlar."""
+    if not yetkili(update):
+        return
+    mesaj = update.message
+    if (mesaj.document.file_size or 0) > 5 * 1024 * 1024:
+        await mesaj.reply_text("Dosya çok büyük (5 MB üstü).")
+        return
+    gecici = GELEN / f"paket_gelen_{mesaj.chat_id}.json"
+    dosya = await mesaj.document.get_file()
+    await dosya.download_to_drive(gecici)
+    try:
+        paket = paketi_dogrula(json.loads(gecici.read_text(encoding="utf-8")))
+    except (ValueError, AnalizHatasi) as hata:
+        gecici.unlink(missing_ok=True)
+        await mesaj.reply_text(f"Yorum paketi okunamadı: {hata}")
+        return
+    gecici.replace(paket_yolu(mesaj.chat_id))
+    urun = paket["urun"]
+    indirilen = 0
+    for i, adres in enumerate((urun.get("fotograflar") or [])[:4]):
+        try:
+            if await asyncio.to_thread(_foto_indir, adres, oturum(mesaj.chat_id) / f"{mesaj.message_id:010d}_f{i}.jpg"):
+                indirilen += 1
+        except requests.RequestException:
+            log.warning("Paket fotoğrafı indirilemedi: %s", adres)
+    foto = (f"{indirilen} ürün fotoğrafı indirildi." if indirilen else
+            "Ürün fotoğrafı indirilemedi; ürün sayfasından 2-3 fotoğraf kaydedip gönder.")
+    await mesaj.reply_text(
+        f"Yorum paketi alındı: {urun.get('ad') or 'ürün'}\n"
+        f"{len(paket['yorumlar'])} yorum · {paket.get('kaynak', '')} {paket.get('siralama', '')}".rstrip() + "\n"
+        f"{foto}\nHazırsa /hazirla yaz.")
+
+
 async def kayit_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ekran kaydı: yorumları kaydırırken alınan video. Kareleri çıkarılıp ekran görüntüsü gibi okunur."""
     if not yetkili(update):
@@ -670,13 +723,16 @@ async def durum(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if liste:
             dakika = int((time.time() - min(p.stat().st_mtime for p in liste)) // 60)
             ek = f" (ilki {dakika} dk önce gönderildi; başka ürüne aitse /iptal yaz)"
+        if paket_yolu(update.effective_chat.id).exists():
+            ek += ". Bir yorum paketi de bekliyor"
         await update.message.reply_text(f"{len(liste)} görüntü bekliyor{ek}. Sıradaki dosya numarası: #{sonraki_no()}")
 
 
 async def iptal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if yetkili(update):
         shutil.rmtree(oturum(update.effective_chat.id), ignore_errors=True)
-        await update.message.reply_text("Görüntüler silindi. Yeni ürün için baştan gönderebilirsin.")
+        paket_yolu(update.effective_chat.id).unlink(missing_ok=True)
+        await update.message.reply_text("Görüntüler ve yorum paketi silindi. Yeni ürün için baştan gönderebilirsin.")
 
 
 async def oneri(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -933,8 +989,8 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gorseller = sorted(p for p in klasor.iterdir()
                        if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and p.name != "kapak.png") \
         if klasor.exists() else []
-    if tam and not gorseller and not (analiz_yolu.exists() and
-                                      json.loads(analiz_yolu.read_text(encoding="utf-8")).get("arama")):
+    if tam and not gorseller and not (klasor / "yorum_paketi.json").exists() and not (
+            analiz_yolu.exists() and json.loads(analiz_yolu.read_text(encoding="utf-8")).get("arama")):
         await update.message.reply_text(f"#{no} için kayıtlı ekran görüntüsü yok; /arastir ile yeniden yapabilirsin.")
         return
     if not tam and not analiz_yolu.exists():
@@ -965,7 +1021,7 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         analiz_yolu.write_text(json.dumps(eski_veri, ensure_ascii=False, indent=1), encoding="utf-8")
     veri = eski_veri if not tam else None
     if veri is not None and veri.get("surum", 0) < SENARYO_SURUMU:
-        if gorseller or arama:
+        if gorseller or arama or (klasor / "yorum_paketi.json").exists():
             tam, veri = True, None
             await update.message.reply_text(
                 f"#{no} metni eski kurallarla yazılmıştı (uzun, fiyatı okuyordu). Yeni kısa metin yazılıyor.")
@@ -981,7 +1037,12 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"#{no} yeniden analiz ediliyor…" if tam else f"#{no} yeniden seslendiriliyor…")
         try:
             if tam:
-                if arama:
+                if (klasor / "yorum_paketi.json").exists():
+                    paket = json.loads((klasor / "yorum_paketi.json").read_text(encoding="utf-8"))
+                    if yeni_ad:
+                        paket.setdefault("urun", {})["ad"] = yeni_ad
+                    veri = await asyncio.to_thread(analiz_metinden, paket, gorseller, no)
+                elif arama:
                     veri = await asyncio.to_thread(arastirma.arastir, arama, no, gorseller)
                 else:
                     veri = await asyncio.to_thread(analiz_et, gorseller, no,
@@ -1017,6 +1078,21 @@ async def hazirla(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id = update.effective_chat.id
     liste = resimler(chat_id)
+    paket_ = paket_yolu(chat_id)
+    if paket_.exists():
+        paket = json.loads(paket_.read_text(encoding="utf-8"))
+
+        def cagir(no):
+            shutil.copy2(paket_, CALISMA / f"dosya_{no:03d}" / "yorum_paketi.json")
+            return analiz_metinden(paket, liste, no)
+
+        tamam = await _uret(context, chat_id,
+                            f"1/3 Yorum paketini okuyorum… ({len(paket.get('yorumlar', []))} yorum)",
+                            cagir, liste, "Paket duruyor. /hazirla ile tekrar deneyebilir ya da /iptal ile silebilirsin.")
+        if tamam:
+            paket_.unlink(missing_ok=True)
+            shutil.rmtree(oturum(chat_id), ignore_errors=True)
+        return
     if len(liste) < 2:
         await update.message.reply_text(
             "En az 2 görüntü gönder: ürün sayfası ve yorumlar. İlk görüntü ürün sayfası olmalı.\n"
@@ -1123,6 +1199,7 @@ def main():
     uygulama.add_handler(CallbackQueryHandler(tema_secildi, pattern=r"^tema:"))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("zip"), guncelleme_al))
+    uygulama.add_handler(MessageHandler(filters.Document.FileExtension("json"), paket_al))
     uygulama.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, resim_al))
     uygulama.add_error_handler(hata_yakala)
     print("Telegram'a bağlanılıyor...")

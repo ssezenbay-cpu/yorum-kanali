@@ -489,6 +489,83 @@ def analiz_et(resimler, no, urun_adi=""):
     return veri
 
 
+METIN_SISTEM = """Sen "{kanal}" adlı Türkçe bir YouTube Shorts ve TikTok kanalının yorum okuyucususun.
+Sana bir ürünün alıcı yorumları numaralı liste olarak verilecek. Görevin: her yorumu konularına ayırmak.
+Sayımı program yapacak; sen sayı verme.
+
+""" + OKUMA_KURALLARI + """
+
+Yorumlar zaten tekil; her numarayı bir kez ele al. Yalnızca geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma."""
+
+METIN_SEMA = """{{
+  "kategori": "ürün tipi, 1-3 kelime",
+  "grup": "gunluk | ev_elektronigi | pahali",
+  "konular": [{{"kod": "A1", "ad": "Ses kalitesi", "yon": "arti", "alinti": "en fazla 10 kelimelik gerçek parça"}}],
+  "yorumlar": [{{"n": 1, "urun": true, "konular": ["A1"]}}],
+  "uyarilar": []
+}}"""
+
+
+def paketi_dogrula(paket):
+    """Yorum paketi (yorumlar.json) beklenen yapıda mı; değilse AnalizHatasi."""
+    if not isinstance(paket, dict) or paket.get("tur") != "yorum_paketi":
+        raise AnalizHatasi("Bu dosya bir yorum paketi değil.")
+    yorumlar = [y for y in paket.get("yorumlar") or [] if isinstance(y, dict) and str(y.get("metin") or "").strip()]
+    if len(yorumlar) < 10:
+        raise AnalizHatasi(f"Pakette yalnızca {len(yorumlar)} yorum var; en az 10 gerekli.")
+    paket["yorumlar"] = yorumlar[:400]
+    paket.setdefault("urun", {})
+    return paket
+
+
+def analiz_metinden(paket, gorseller, no):
+    """Yorum paketinden video verisi: yorumlar metin olarak okunur, kod sayar, metin bu sayılarla yazılır.
+    gorseller: ürün fotoğrafları (paketteki adreslerden indirilenler ya da kullanıcının gönderdikleri)."""
+    paket = paketi_dogrula(paket)
+    urun = paket["urun"]
+    istemci = anthropic.Anthropic(api_key=A.ANTHROPIC_API_KEY)
+    satirlar = []
+    for i, y in enumerate(paket["yorumlar"], 1):
+        yildiz = f"{y.get('yildiz')}★ · " if y.get("yildiz") else ""
+        metin = " ".join(str(y.get("metin")).split())[:700]
+        satirlar.append(f"[{i}] {yildiz}{metin}")
+    istek = (f"Ürün: {urun.get('ad', '')}\nKaynak: {paket.get('kaynak', '')}\n\n{len(satirlar)} yorum:\n"
+             + "\n".join(satirlar) + "\n\nŞu yapıda JSON döndür (her yorum numarası için bir satır):\n"
+             + METIN_SEMA.format())
+    okuma = _iste(istemci, METIN_SISTEM.replace("{kanal}", A.KANAL_ADI), [{"type": "text", "text": istek}],
+                  "Metin okuma")
+    kaynak = str(paket.get("kaynak") or "").strip()
+    gelen = {}
+    for y in okuma.get("yorumlar") or []:
+        try:
+            gelen[int(y.get("n"))] = y
+        except (TypeError, ValueError, AttributeError):
+            continue
+    yorumlar = []
+    for i, y in enumerate(paket["yorumlar"], 1):
+        siniflama = gelen.get(i, {})
+        yorumlar.append({"anahtar": f"#{i}", "tarih": y.get("tarih", ""), "yildiz": y.get("yildiz"), "kaynak": kaynak,
+                         "urun": siniflama.get("urun", False), "konular": siniflama.get("konular") or []})
+    if len(gelen) < len(paket["yorumlar"]) * 0.8:
+        log.warning("Metin okumada %d/%d yorum sınıflandı", len(gelen), len(paket["yorumlar"]))
+    okuma.update({
+        "urun_adi": urun.get("ad", ""), "fiyat": urun.get("fiyat", ""), "puan": urun.get("puan", ""),
+        "toplam_yorum": urun.get("toplam_degerlendirme", ""), "satici": urun.get("satici", ""), "site": kaynak,
+        "kategori": okuma.get("kategori") or urun.get("kategori", ""), "yorumlar": yorumlar,
+        "urun_gorseli": {"goruntu": 1} if gorseller else None,
+        "urun_fotograflari": list(range(1, min(len(gorseller), 4) + 1)),
+    })
+    etiket = kaynak + (f" · {paket['siralama']} {len(yorumlar)}" if paket.get("siralama") else "")
+    veri = senaryo_yaz(istemci, okuma, no, kaynak_etiketi=etiket)
+    veri["okuma"] = {"konular": okuma.get("konular"), "yorumlar": yorumlar}
+    if len(gelen) < len(paket["yorumlar"]) * 0.8:
+        veri["uyarilar"].append(f"Yorumların yalnızca {len(gelen)}/{len(paket['yorumlar'])} tanesi sınıflandırıldı.")
+    if not gorseller:
+        veri["uyarilar"].append("Ürün fotoğrafı yoktu; videoda ürün yerine adı yazıyor. Fotoğraf gönderip "
+                                f"/tekrar {no} yaz.")
+    return veri
+
+
 def anthropic_dogrula(anahtar):
     """Anahtar geçerliyse True döner (ücretsiz bir istekle)."""
     try:
