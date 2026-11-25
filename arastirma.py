@@ -124,7 +124,8 @@ def arastir(urun, no, gorseller=()):
         not_ += (f" DİKKAT: okunanların yüzde {int(pay * 100)}'i şikâyet sitesinden. Şikâyetleri 'şikâyet sitelerinde' "
                  "diye ayrıca belirt, oranı tüm alıcılara genelleme; sitedeki puan yüksekse hükmü 'ALINMAZ' yapma.")
     try:
-        veri = senaryo_yaz(istemci, okuma, no, kaynak_notu=not_)
+        veri = senaryo_yaz(istemci, okuma, no, kaynak_notu=not_,
+                           kaynak_etiketi=", ".join(k["ad"] for k in kaynaklar[:3]))
     except AnalizHatasi as hata:
         if "ürünü anlatıyor" not in str(hata):
             raise

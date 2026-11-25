@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import re
+from datetime import datetime
 
 import anthropic
 from PIL import Image, ImageOps
@@ -12,7 +13,7 @@ import ayarlar as A
 from veriler import GRUPLAR, fiyat_sayi
 
 ROLLER = ["acilis", "baglam", "ovgu", "sikayet", "hukum", "kapanis"]
-SENARYO_SURUMU = 6  # kurallar değişince artar; /tekrar eski metni görünce analizi yeniler
+SENARYO_SURUMU = 7  # kurallar değişince artar; /tekrar eski metni görünce analizi yeniler
 HUKUMLER = {"ALINIR", "ALINMAZ", "DİKKATLİ AL"}
 log = logging.getLogger("analiz")
 YASAK_IFADELER = ["denedim", "kullandım", "test ettim", "aldım ve", "bende de"]
@@ -71,7 +72,10 @@ OKUMA_KURALLARI = """Kesin kurallar:
    "Orijinal çıktı", "hızlı geldi", "iyi paketlenmiş" konu değildir. Taklit gelme, garanti ya da fatura sorunu eksi konu olabilir.
    Her yorumun "konular" alanına o yorumda gerçekten geçen konuların kodlarını yaz; bir yorumda hem artı hem eksi olabilir.
 5. "anahtar": yorumun ilk 4 kelimesi (yalnızca tekrarları ayıklamak için kullanılır, videoda kullanılmaz).
-   Yorum yazanın adını hiçbir alana yazma."""
+   Yorum yazanın adını hiçbir alana yazma.
+6. Her konu için "alinti": o konuyu anlatan gerçek bir yorumdan en fazla 10 kelimelik birebir parça
+   (küçük harf, yazım hatası düzeltilebilir). İsim, telefon, sipariş numarası gibi kişisel bilgi içermesin; yoksa boş bırak.
+7. "yildiz": yorumun verdiği yıldız (1-5), görünmüyorsa null. "site": görüntülerdeki site adı (Trendyol, Hepsiburada...)."""
 
 OKUMA_SEMA = """{{
   "urun_adi": "kısa ürün adı, en fazla 6 kelime",
@@ -83,7 +87,8 @@ OKUMA_SEMA = """{{
   "satici": "görünüyorsa satıcı adı ve satıcı puanı, yoksa boş",
   "urun_gorseli": {{"goruntu": 1, "kutu": [0.0, 0.0, 1.0, 1.0]}},
   "urun_fotograflari": [1, 2],
-  "konular": [{{"kod": "A1", "ad": "Sıcak tutma", "yon": "arti"}}, {{"kod": "E1", "ad": "Kapak sızdırıyor", "yon": "eksi"}}],
+  "site": "Trendyol",
+  "konular": [{{"kod": "A1", "ad": "Sıcak tutma", "yon": "arti", "alinti": "en fazla 10 kelimelik gerçek parça"}}, {{"kod": "E1", "ad": "Kapak sızdırıyor", "yon": "eksi", "alinti": "..."}}],
   "yorumlar": [{{"g": 2, {kaynak_alani}"tarih": "görünüyorsa", "yildiz": 5, "anahtar": "ilk dört kelime", "urun": true, "konular": ["A1"]}}],
   "uyarilar": ["okunamayan veya belirsiz bilgiler"]
 }}"""
@@ -127,10 +132,10 @@ Kesin kurallar:
      ("4,7 puanlı süpürgeyi alan 5 kişi aynı şeyi yazıyor"). Ürünü hiç görmemiş biri de anlamalı; hükmü söyleme.
    baglam: tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı, ardından "Hüküm sonda."
    ovgu: bağlamdaki sayıyı tekrar etmeden doğrudan "12 kişi ..." diye başlar; en çok övülen iki konu.
-   sikayet: kısa bir soruyla başlar ("Peki sorun ne?" gibi), sonra en çok şikâyet edilen iki konu, sayılarıyla.
+   sikayet: kısa bir soruyla başlar ("Peki sorun ne?" gibi), sonra en çok şikâyet edilen iki ya da üç konu, sayılarıyla.
    hukum: "Hüküm: ..." ve kime uygun olduğu, kısa. "kime_uygun" somut bir kullanım ya da kişi tarifi olsun
      ("küçük evde hızlı temizlik için", "uzun süre çalışacaksan değil"); "riski göze alanlar" gibi boş ifade yok.
-   kapanis: "Sıradaki ürün ne olsun? Yorumlara yaz. Yorum dosyası #N."
+   kapanis: "Sıradaki dosyayı sen seç. Yorumlara yaz. Yorum dosyası #N."
 9. ekran_acilis: ilk karedeki büyük yazı, en fazla 7 kelime, oranı göster ve merakı korusun: "7/46 alıcı aynı şeyi yazmış" gibi.
 10. ovulenler ve sikayetler yalnızca verilen listeden seçilir; konu adı ve sayı listedekiyle aynı. Aynı konu iki tarafta olmasın.
     Yalnızca 1 yorumda geçen konuyu seçme (listede 2 ve üstü varsa).
@@ -139,9 +144,11 @@ Yalnızca geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma."""
 
 SENARYO_SEMA = """{{
   "ovulenler": [{{"konu": "listedeki ad", "sayi": 0}}, {{"konu": "...", "sayi": 0}}],
-  "sikayetler": [{{"konu": "listedeki ad", "sayi": 0}}, {{"konu": "...", "sayi": 0}}],
+  "sikayetler": [{{"konu": "listedeki ad", "sayi": 0}}, {{"konu": "...", "sayi": 0}}, {{"konu": "varsa üçüncü", "sayi": 0}}],
   "hukum": "ALINIR | ALINMAZ | DİKKATLİ AL",
   "kime_uygun": "en fazla 10 kelime: kime uygun ya da kime uygun değil",
+  "uygun": "en fazla 6 kelime: kime ya da ne için uygun (ör. müzik dinleyen, kısıtlı bütçe)",
+  "uygun_degil": "en fazla 6 kelime: kime uygun değil (ör. telefonla çok konuşan)",
   "ekran_acilis": "en fazla 7 kelime, oranlı; hüküm değil",
   "senaryo": {{
     "acilis": "...",
@@ -149,7 +156,7 @@ SENARYO_SEMA = """{{
     "ovgu": "...",
     "sikayet": "...",
     "hukum": "...",
-    "kapanis": "Sıradaki ürün ne olsun? Yorumlara yaz. Yorum dosyası #{no}."
+    "kapanis": "Sıradaki dosyayı sen seç. Yorumlara yaz. Yorum dosyası #{no}."
   }},
   "baslik": "en fazla 60 karakter, merak uyandıran",
   "aciklama": "2-3 cümle",
@@ -171,7 +178,9 @@ def sayim_yap(okuma):
         ad = " ".join(str(k.get("ad") or "").split())[:40]
         if kod and ad:
             yon = "eksi" if str(k.get("yon") or "").lower().startswith("e") else "arti"
-            konular[kod] = {"ad": ad, "yon": yon, "sayi": 0}
+            alinti = " ".join(str(k.get("alinti") or "").strip(" \"'“”").split())
+            alinti = " ".join(alinti.split()[:12]) if alinti and not re.search(r"\d{6,}", alinti) else ""
+            konular[kod] = {"ad": ad, "yon": yon, "sayi": 0, "alinti": alinti}
     gorulen, tekil = set(), []
     for y in okuma.get("yorumlar") or []:
         if not isinstance(y, dict):
@@ -194,8 +203,16 @@ def sayim_yap(okuma):
             for kod in kodlar:
                 konular[kod]["sayi"] += 1
     sirali = sorted((k for k in konular.values() if k["sayi"] > 0), key=lambda k: -k["sayi"])
+    yildizlar = {}
+    for y in urun_yorumlari:
+        try:
+            yildiz = int(y.get("yildiz"))
+        except (TypeError, ValueError):
+            continue
+        if 1 <= yildiz <= 5:
+            yildizlar[yildiz] = yildizlar.get(yildiz, 0) + 1
     return {"okunan_yorum": len(tekil), "urun_yorumu": len(urun_yorumlari), "konular": sirali,
-            "kaynak_sayisi": kaynak_sayisi}
+            "kaynak_sayisi": kaynak_sayisi, "yildizlar": yildizlar}
 
 
 def sayim_metni(sayim):
@@ -233,7 +250,7 @@ def _maddeleri_duzelt(secilen, liste):
         if k["ad"] not in kullanilan:
             sonuc.append({"konu": k["ad"], "sayi": k["sayi"]})
             kullanilan.add(k["ad"])
-    return sonuc[:2]
+    return sonuc[:3]
 
 
 def _iste(istemci, sistem, icerik, etiket, max_tokens=16000):
@@ -257,7 +274,7 @@ def _iste(istemci, sistem, icerik, etiket, max_tokens=16000):
     raise AnalizHatasi("Yapay zekâ geçerli bir yanıt vermedi.")
 
 
-def senaryo_yaz(istemci, okuma, no, kaynak_notu=""):
+def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi=""):
     """Sayımı yapar, metni bu sayılarla yazdırır ve doğrulanmış video verisini döndürür."""
     if "hata" in okuma:
         raise AnalizHatasi(okuma["hata"])
@@ -278,6 +295,10 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu=""):
          f"Okunan yorum: {sayim['okunan_yorum']}", f"Ürünün kendisini anlatan yorum: {sayim['urun_yorumu']}",
          "Övülen konular (kaç yorumda geçtiği):"] + [f"- {k['ad']}: {k['sayi']}" for k in arti[:8]]
         + ["Şikâyet edilen konular (kaç yorumda geçtiği):"] + [f"- {k['ad']}: {k['sayi']}" for k in eksi[:8]])
+    yz = sayim["yildizlar"]
+    if sum(yz.values()) >= 10:
+        tablo += (f"\nYıldız dağılımı (ürün yorumlarında): 5 yıldız {yz.get(5, 0)}, 4 yıldız {yz.get(4, 0)}, "
+                  f"3 yıldız {yz.get(3, 0)}, 1-2 yıldız {yz.get(1, 0) + yz.get(2, 0)}")
     if kaynak_notu:
         tablo += "\n" + kaynak_notu
     istek = (f"Bu video \"Yorum dosyası #{no}\" olacak.\n\n{tablo}\n\nBu sayılarla şu yapıda JSON döndür:\n"
@@ -286,7 +307,10 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu=""):
                  "Senaryo", max_tokens=8000)
     veri = {alan: okuma.get(alan, "") for alan in ("urun_adi", "kategori", "grup", "fiyat", "puan",
                                                    "toplam_yorum", "satici")}
-    veri.update({k: yazi.get(k) or "" for k in ("hukum", "kime_uygun", "ekran_acilis", "baslik", "aciklama")})
+    veri.update({k: yazi.get(k) or "" for k in ("hukum", "kime_uygun", "uygun", "uygun_degil", "ekran_acilis",
+                                                 "baslik", "aciklama")})
+    if not veri["kime_uygun"] and veri["uygun"]:
+        veri["kime_uygun"] = veri["uygun"]
     veri["senaryo"] = yazi.get("senaryo") if isinstance(yazi.get("senaryo"), dict) else {}
     veri["etiketler"] = yazi.get("etiketler") or []
     veri["urun_gorseli"] = okuma.get("urun_gorseli")
@@ -295,6 +319,16 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu=""):
     veri["urun_yorumu"] = sayim["urun_yorumu"]
     veri["ovulenler"] = _maddeleri_duzelt(yazi.get("ovulenler"), arti)
     veri["sikayetler"] = _maddeleri_duzelt(yazi.get("sikayetler"), eksi)
+    # ekranda gösterilecek kısa, isimsiz alıntılar: seçilen ilk övgü ve ilk şikâyet konusundan
+    veri["alintilar"] = {}
+    for alan, rol, liste in (("ovulenler", "ovgu", arti), ("sikayetler", "sikayet", eksi)):
+        for oge in veri[alan]:
+            k_ = _konu_bul(oge["konu"], liste)
+            if k_ and k_.get("alinti"):
+                veri["alintilar"][rol] = k_["alinti"]
+                break
+    veri["kaynak_etiketi"] = kaynak_etiketi or str(okuma.get("site") or "").strip() or "ekran görüntüleri"
+    veri["tarih"] = datetime.now().strftime("%d.%m.%Y")
     veri["uyarilar"] = list(okuma.get("uyarilar") or [])
     if not veri["senaryo"]:
         raise AnalizHatasi("Metin yazılamadı. Tekrar dene.")
@@ -354,7 +388,7 @@ def dogrula(veri, no):
 
     for alan in ("ovulenler", "sikayetler"):
         temiz = []
-        for oge in (veri.get(alan) or [])[:2]:
+        for oge in (veri.get(alan) or [])[:3]:
             sayi = max(0, min(int(oge.get("sayi", 0) or 0), urun_yorumu))
             temiz.append({"konu": str(oge.get("konu", "")).strip(), "sayi": sayi})
         if not temiz:
@@ -413,7 +447,7 @@ def dogrula(veri, no):
     return veri
 
 
-EN_FAZLA_GORUNTU = 30
+EN_FAZLA_GORUNTU = 45  # ekran kaydından gelen kareler dahil
 
 
 def analiz_et(resimler, no):

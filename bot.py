@@ -23,6 +23,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, Con
 import ayarlar as A
 
 import arastirma
+import ekran_kaydi
 import miksaj
 import okunus
 import urun_avi
@@ -55,7 +56,9 @@ YARDIM = (
     "Ekran görüntüsüyle (Trendyol gibi otomatik okunamayan siteler için):\n"
     "1. Ürün sayfasından 2-3 ürün fotoğrafı kaydet (uzun bas → Fotoğrafı Kaydet; farklı açılar) ve onları gönder. "
     "Sonra yorumların ekran görüntülerini gönder. Video her bölümde başka açıyı gösterir.\n"
-    "2. /hazirla yaz. İstersen görüntüleri gönderip /arastir da yazabilirsin; ikisi birlikte okunur.\n\n"
+    "2. /hazirla yaz. İstersen görüntüleri gönderip /arastir da yazabilirsin; ikisi birlikte okunur.\n"
+    "Ekran kaydı da olur: yorumları 'En yeni' sıralamasıyla aç, kaydı başlat, yavaşça aşağı kaydır ve "
+    "kaydı bota gönder (1 dakikada 40-60 yorum).\n\n"
     "Diğer komutlar:\n"
     "/durum – kaç görüntü gönderdiğini gösterir\n"
     "/iptal – gönderilen görüntüleri siler\n"
@@ -439,11 +442,15 @@ def _guncellemeyi_uygula(zip_yolu):
         for bilgi in arsiv.infolist():
             if bilgi.is_dir():
                 continue
-            ad = bilgi.filename.replace("\\", "/").rsplit("/", 1)[-1]
-            if ad.endswith(".py") or ad in GUNCELLENEBILIR:
-                if bilgi.file_size > 2_000_000:
-                    raise ValueError(f"{ad} çok büyük.")
-                yeni[ad] = arsiv.read(bilgi)
+            parcalar = bilgi.filename.replace("\\", "/").split("/")
+            ad = parcalar[-1]
+            if len(parcalar) >= 2 and parcalar[-2] == "yazitipleri" and ad.endswith((".ttf", ".txt")):
+                ad = "yazitipleri/" + ad  # videoda kullanılan yazı tipleri
+            elif not (ad.endswith(".py") or ad in GUNCELLENEBILIR):
+                continue
+            if bilgi.file_size > 2_000_000:
+                raise ValueError(f"{ad} çok büyük.")
+            yeni[ad] = arsiv.read(bilgi)
     if "bot.py" not in yeni:
         raise ValueError("Bu zip'te bot.py yok; doğru dosyayı gönderdiğinden emin ol.")
     for ad, icerik in yeni.items():
@@ -457,6 +464,8 @@ def _guncellemeyi_uygula(zip_yolu):
     shutil.rmtree(yedek, ignore_errors=True)
     yedek.mkdir(parents=True)
     for ad in degisen:
+        (yedek / ad).parent.mkdir(parents=True, exist_ok=True)
+        (KOK / ad).parent.mkdir(parents=True, exist_ok=True)
         if (KOK / ad).exists():
             shutil.copy2(KOK / ad, yedek / ad)
         (KOK / ad).write_bytes(yeni[ad])
@@ -574,6 +583,13 @@ async def resim_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not onceki:
         await mesaj.reply_text("İlk görüntü alındı. Hepsini gönderince /hazirla ya da /arastir ÜRÜN ADI yaz.")
         return
+    await _eski_goruntu_sor(mesaj, onceki, simdi)
+
+
+async def _eski_goruntu_sor(mesaj, onceki, simdi):
+    """Uzun aradan sonra yeni görüntü/kayıt gelince eskilerin silinip silinmeyeceğini sorar."""
+    if not onceki:
+        return
     en_yeni = max(p.stat().st_mtime for p in onceki)
     if simdi - en_yeni > ESKI_GORUNTU_DK * 60:
         # Uzun aradan sonra gelen görüntü: büyük ihtimalle yeni bir ürün. Eskilerle karışmasın diye sor.
@@ -584,6 +600,42 @@ async def resim_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await mesaj.reply_text(
             f"Daha önce gönderdiğin {len(onceki)} görüntü bekliyor ({dakika} dk önce). "
             "Yeni bir ürüne geçtiysen eskileri sil; aynı ürünse devam et.", reply_markup=dugmeler)
+
+
+async def kayit_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ekran kaydı: yorumları kaydırırken alınan video. Kareleri çıkarılıp ekran görüntüsü gibi okunur."""
+    if not yetkili(update):
+        return
+    mesaj = update.message
+    kaynak = mesaj.video or mesaj.document
+    if kaynak is None:
+        return
+    if (kaynak.file_size or 0) > 20 * 1024 * 1024:
+        await mesaj.reply_text(
+            "Kayıt 20 MB'tan büyük; Telegram botları bunu indiremiyor.\n"
+            "Telegram'da 'dosya' olarak değil normal video olarak gönder (küçültülür) ya da kaydı 1 dakikalık "
+            "parçalara bölüp ayrı ayrı gönder.")
+        return
+    onceki = resimler(mesaj.chat_id)
+    simdi = time.time()
+    durum_ = await mesaj.reply_text("Ekran kaydı alındı, kareleri çıkarıyorum…")
+    gecici = GELEN / f"kayit_{mesaj.chat_id}_{mesaj.message_id}.mp4"
+    try:
+        dosya = await kaynak.get_file()
+        await dosya.download_to_drive(gecici)
+        kareler, toplam = await asyncio.to_thread(
+            ekran_kaydi.kareleri_cikar, gecici, oturum(mesaj.chat_id), f"{mesaj.message_id:010d}")
+    except Exception as hata:  # noqa: BLE001
+        log.exception("ekran kaydı hatası")
+        await durum_.edit_text(f"Kayıt okunamadı: {hata}")
+        return
+    finally:
+        gecici.unlink(missing_ok=True)
+    hepsi = len(resimler(mesaj.chat_id))
+    await durum_.edit_text(
+        f"Kayıttan {len(kareler)} farklı kare alındı (toplam {hepsi} görüntü bekliyor).\n"
+        "Ürün fotoğraflarını da gönderdiysen /hazirla yaz. Aynı yorum birden çok karede görünse de bir kez sayılır.")
+    await _eski_goruntu_sor(mesaj, onceki, simdi)
 
 
 async def eski_goruntu_secildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -725,6 +777,9 @@ async def _haftalik_dongu(uygulama):
 def paylasim_metni(veri, no):
     etiketler = " ".join("#" + e for e in veri.get("etiketler", []) if e)
     kaynak = f"Okunan yorumlar: {arastirma.kaynak_satiri(veri)}.\n" if veri.get("kaynaklar") else ""
+    if veri.get("tarih"):
+        kaynak += (f"Veri: {veri['okunan_yorum']} yorum ({veri.get('urun_yorumu', veri['okunan_yorum'])} ürünle ilgili), "
+                   f"kaynak: {veri.get('kaynak_etiketi', '')}, {veri['tarih']}. Rakamlar okunan yorumlardan sayıldı.\n")
     parcalar = [
         f"BAŞLIK:\n{veri['baslik']}",
         f"AÇIKLAMA:\n{veri.get('aciklama', '').strip()}\n\n{kaynak}"
@@ -997,6 +1052,7 @@ def main():
     uygulama.add_handler(CommandHandler("muzik", muzik_komutu))
     uygulama.add_handler(CommandHandler("efekt", efekt_komutu))
     uygulama.add_handler(MessageHandler(filters.AUDIO | filters.Document.Category("audio/"), muzik_al))
+    uygulama.add_handler(MessageHandler(filters.VIDEO | filters.Document.Category("video/"), kayit_al))
     uygulama.add_handler(CommandHandler("tema", tema_komutu))
     uygulama.add_handler(CallbackQueryHandler(tema_secildi, pattern=r"^tema:"))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
