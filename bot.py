@@ -59,7 +59,7 @@ YARDIM = (
     "/rapor – hangi ürün grubunun daha iyi gittiğini gösterir\n"
     "/demo – API kullanmadan sessiz örnek video yapar\n"
     "/okunus KELİME = OKUNUŞ – yanlış okunan kelimeyi düzeltir (ör. /okunus Dreame = Drim)\n"
-    "/tekrar NO – videonun sesini ve kurgusunu analizi tekrarlamadan yeniden yapar\n\n"
+    "/tekrar NO – videonun sesini ve kurgusunu yeniden yapar; /tekrar NO tam analizi de yeniler\n\n"
     "Ayarlar:\n"
     "/ayarlar – hangi ayarların tamam olduğunu gösterir\n"
     "/elevenlabs ANAHTAR – ElevenLabs anahtarını kaydeder, sesini bulur\n"
@@ -614,7 +614,8 @@ async def okunus_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Yanlış okunan bir kelimeyi düzeltmek için:\n/okunus Stanley = Stenli\n"
             "Silmek için: /okunus sil Stanley\n\n"
             "Sayılar (1.839 TL, 4,6, 46'sı), %, QR gibi kısaltmalar zaten Türkçe okunuyor.\n"
-            "Düzelttikten sonra videonun sesini yenilemek için: /tekrar DOSYA_NO\n\n"
+            "Düzelttikten sonra videonun sesini yenilemek için: /tekrar DOSYA_NO\n"
+            "Analizi de baştan yaptırmak için: /tekrar DOSYA_NO tam\n\n"
             f"Senin eklediklerin:\n{liste}")
         return
     if metin.lower().startswith("sil "):
@@ -641,23 +642,35 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         no = int(context.args[0].lstrip("#"))
     except (IndexError, ValueError):
-        await update.message.reply_text("Kullanım: /tekrar DOSYA_NO   (ör. /tekrar 1)")
+        await update.message.reply_text("Kullanım: /tekrar DOSYA_NO   (ör. /tekrar 1)\n"
+                                        "Analizi de yenilemek için: /tekrar 1 tam")
         return
     klasor = CALISMA / f"dosya_{no:03d}"
     analiz_yolu = klasor / "analiz.json"
-    if not analiz_yolu.exists():
-        await update.message.reply_text(f"#{no} için kayıtlı analiz yok; bu video eski sürümle yapılmış olabilir.")
-        return
-    veri = json.loads(analiz_yolu.read_text(encoding="utf-8"))
+    tam = len(context.args) > 1 and context.args[1].lower() in ("tam", "analiz")
     gorseller = sorted(p for p in klasor.iterdir()
-                       if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and p.name != "kapak.png")
+                       if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and p.name != "kapak.png") \
+        if klasor.exists() else []
+    if tam and not gorseller:
+        await update.message.reply_text(f"#{no} için kayıtlı ekran görüntüsü yok; /arastir ile yeniden yapabilirsin.")
+        return
+    if not tam and not analiz_yolu.exists():
+        await update.message.reply_text(f"#{no} için kayıtlı analiz yok. Görüntüler duruyorsa: /tekrar {no} tam")
+        return
+    veri = json.loads(analiz_yolu.read_text(encoding="utf-8")) if not tam else None
     kilit = context.application.bot_data.setdefault("uretim_kilidi", asyncio.Lock())
     if kilit.locked():
         await update.message.reply_text("Şu an bir video hazırlanıyor; o bitince tekrar dene.")
         return
     async with kilit:
-        durum_mesaji = await update.message.reply_text(f"#{no} yeniden seslendiriliyor…")
+        durum_mesaji = await update.message.reply_text(
+            f"#{no} yeniden analiz ediliyor…" if tam else f"#{no} yeniden seslendiriliyor…")
         try:
+            if tam:
+                veri = await asyncio.to_thread(analiz_et, gorseller, no)
+                analiz_yolu.write_text(json.dumps(veri, ensure_ascii=False, indent=1), encoding="utf-8")
+                video_kaydet(no, veri)
+                await durum_mesaji.edit_text(f"#{no} seslendiriliyor… (hüküm: {veri['hukum']})")
             konusma = okunus.konusma_metni([veri["senaryo"][r] for r in ROLLER])
             ses_yolu = klasor / "ses.mp3"
             hiz = await asyncio.to_thread(seslendir, konusma, ses_yolu)
@@ -675,7 +688,7 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(cikti, "rb") as dosya:
             await update.message.reply_video(dosya, caption=f"Yorum dosyası #{no}", supports_streaming=True,
                                              read_timeout=180, write_timeout=180)
-        await update.message.reply_text("Seslendirilen metin:\n" + konusma)
+        await update.message.reply_text(paylasim_metni(veri, no) if tam else "Seslendirilen metin:\n" + konusma)
 
 
 async def hazirla(update: Update, context: ContextTypes.DEFAULT_TYPE):

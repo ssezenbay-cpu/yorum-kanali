@@ -35,7 +35,10 @@ Kesin kurallar:
    "Taklit", "orijinal değil" gibi iddiaları alıcıların görüşü olarak aktar. Senaryoda ve ekranda satıcı adı verme, satıcıyı suçlama. Bu tür şikâyetler çoksa hükümde "resmi ya da yetkili mağazadan al" uyarısı ver.
 7. Sağlık, tedavi veya güvenlik iddiası yapma.
 8. Hüküm: şikâyetler ürünün temel işlevini bozuyorsa ve pazaryeri yorumlarında da sık geçiyorsa "ALINMAZ"; övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL".
-9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 60-80 kelime. Açılış en fazla 8 kelime ve bir rakam ya da hüküm içerir. Bağlam bölümünde kaç yorum okunduğunu ve hangi sitelerden olduğunu kısaca söyle.
+9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 60-80 kelime. Bağlam bölümünde kaç yorum okunduğunu ve hangi sitelerden olduğunu kısaca söyle.
+   Açılış (acilis ve ekran_acilis) okuduklarındaki EN ŞAŞIRTICI somut bulgudur ve bir rakam içerir. Hükmü açılışta söyleme; hüküm sona kalsın.
+   Övülenler ürünün kendi özelliklerinden seçilir; "orijinal çıktı", "hızlı geldi" övgü sayılmaz. Aynı konu hem övgüde hem şikâyette olmasın.
+   "urun_gorseli" alanı için: kullanıcı ekran görüntüsü gönderdiyse ürün fotoğrafının yerini yaz, göndermediyse null.
 10. Araştırma bitince yalnızca istenen JSON'u döndür, başka hiçbir şey yazma."""
 
 ISTEK = """Ürün: {urun}

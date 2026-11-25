@@ -37,7 +37,10 @@ Kesin kurallar:
    "Taklit", "orijinal değil", "sahte" gibi iddiaları kesin bilgi gibi verme: "X alıcı ürünün orijinal olmadığını düşünüyor" gibi alıcıların görüşü olarak aktar. Senaryoda ve ekranda satıcı adı verme, satıcıyı suçlama. Bu tür şikâyetler çoksa hükümde ve "kime_uygun"da "resmi ya da yetkili mağazadan al" uyarısı ver.
 7. Sağlık, tedavi veya güvenlik iddiası yapma.
 8. Hüküm: şikâyetler ürünün temel işlevini bozuyorsa veya ürünü anlatan yorumların yarısına yakınındaysa "ALINMAZ"; övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL".
-9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 60-80 kelime. Açılış en fazla 8 kelime ve bir rakam ya da hüküm içerir.
+9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 60-80 kelime.
+   Açılış (acilis ve ekran_acilis) yorumlardaki EN ŞAŞIRTICI somut bulgudur ve bir rakam içerir, ör. "1.839 liralık termosta 6 kişi garanti kodunu bulamadı". Hükmü açılışta söyleme; hüküm sona kalsın ki izleyici merak etsin.
+   Övülenler ürünün kendi özelliklerinden seçilir (performans, malzeme, tasarım, kullanım kolaylığı). "Orijinal çıktı", "hızlı geldi", "iyi paketlenmiş" övgü sayılmaz. Şikâyetlerde taklit gelme, garanti ya da fatura sorunu gibi satın alma riskleri sayılabilir. Aynı konu hem övgüde hem şikâyette olmasın; birbiriyle çelişen maddeler seçme.
+   "urun_gorseli": ürünün kendi büyük fotoğrafının hangi görüntüde olduğu (1'den başlayarak) ve o fotoğrafın sınırları [sol, üst, sağ, alt], görüntünün genişliğine ve yüksekliğine oranla 0 ile 1 arası. Alıcıların yorumlara eklediği fotoğrafları seçme. Ürün fotoğrafı yoksa null.
 10. Senaryonun bölümleri sırayla okunacak; her bölüm bir öncekinin devamı gibi akmalı.
 
 Yalnızca geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma.
@@ -57,7 +60,8 @@ SEMA = """{{
   "sikayetler": [{{"konu": "en fazla 4 kelime", "sayi": 0}}, {{"konu": "...", "sayi": 0}}],
   "hukum": "ALINIR | ALINMAZ | DİKKATLİ AL",
   "kime_uygun": "en fazla 10 kelime: kime uygun ya da kime uygun değil",
-  "ekran_acilis": "ilk karede büyük yazı, en fazla 6 kelime",
+  "ekran_acilis": "ilk karedeki büyük yazı: en şaşırtıcı bulgu, rakamlı, en fazla 7 kelime; hüküm değil",
+  "urun_gorseli": {{"goruntu": 1, "kutu": [0.0, 0.0, 1.0, 1.0]}},
   "senaryo": {{
     "acilis": "...",
     "baglam": "fiyat, puan ve kaç yorum okunduğu",
@@ -111,6 +115,18 @@ def _json_cikar(metin):
 DUZELT = ("Yanıtın istenen JSON değildi ya da yarım kaldı. Aynı analizi yalnızca istenen JSON nesnesi olarak "
           "ver; metinleri kısa tut, JSON dışında hiçbir şey yazma. Görüntülerde ürün sayfası ya da yorum yoksa "
           'yalnızca {"hata": "kısa açıklama"} döndür.')
+
+
+def _gorsel_kutusu(deger):
+    """{"goruntu": n, "kutu": [x1, y1, x2, y2]} biçimini doğrular; bozuksa None."""
+    try:
+        goruntu = int(deger["goruntu"])
+        x1, y1, x2, y2 = (min(1.0, max(0.0, float(v))) for v in deger["kutu"])
+    except (TypeError, KeyError, ValueError):
+        return None
+    if goruntu < 1 or x2 - x1 < 0.08 or y2 - y1 < 0.05:
+        return None
+    return {"goruntu": goruntu, "kutu": [x1, y1, x2, y2]}
 
 
 def dogrula(veri, no):
@@ -183,6 +199,7 @@ def dogrula(veri, no):
     veri["grup"] = grup
 
     veri["ekran_acilis"] = str(veri.get("ekran_acilis") or senaryo["acilis"]).strip()
+    veri["urun_gorseli"] = _gorsel_kutusu(veri.get("urun_gorseli"))
     veri["kime_uygun"] = str(veri.get("kime_uygun") or "").strip()
     veri["etiketler"] = [str(e).lstrip("#").replace(" ", "") for e in (veri.get("etiketler") or [])][:8]
     veri["uyarilar"] = uyarilar
