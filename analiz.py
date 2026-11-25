@@ -31,6 +31,7 @@ Kesin kurallar:
 4. Senaryoda rakamlar örneklemden verilir: "ürünü anlatan 30 yorumun 12'si" gibi. Bağlam bölümünde kaç yorum okunduğunu ve kaçının ürünü anlattığını söyle (ör. "40 yorum okudum, 30'u ürünü anlatıyordu"). "Binlerce yorum", "herkes" gibi abartı yok.
 5. Ürünü sen kullanmadın: "denedim", "kullandım", "test ettim" gibi ifadeler yasak. "Alıcılar", "yorumlara göre" de.
 6. Yorum yazanların adlarını kullanma, cümlelerini birebir alıntılama; kendi cümlelerinle özetle.
+   "Taklit", "orijinal değil", "sahte" gibi iddiaları kesin bilgi gibi verme: "X alıcı ürünün orijinal olmadığını düşünüyor" gibi alıcıların görüşü olarak aktar. Senaryoda ve ekranda satıcı adı verme, satıcıyı suçlama. Bu tür şikâyetler çoksa hükümde ve "kime_uygun"da "resmi ya da yetkili mağazadan al" uyarısı ver.
 7. Sağlık, tedavi veya güvenlik iddiası yapma.
 8. Hüküm: şikâyetler ürünün temel işlevini bozuyorsa veya ürünü anlatan yorumların yarısına yakınındaysa "ALINMAZ"; övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL".
 9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 60-80 kelime. Açılış en fazla 8 kelime ve bir rakam ya da hüküm içerir.
