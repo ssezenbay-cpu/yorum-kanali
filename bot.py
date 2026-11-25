@@ -69,7 +69,7 @@ YARDIM = (
     "/rapor – hangi ürün grubunun daha iyi gittiğini gösterir\n"
     "/demo – API kullanmadan sessiz örnek video yapar\n"
     "/okunus KELİME = OKUNUŞ – yanlış okunan kelimeyi düzeltir (ör. /okunus Dreame = Drim)\n"    "/dene 31 – bir sayının ya da cümlenin okunuşunu dinletir; doğru olanı seçersin\n"
-    "/siradaki airfryer | robot süpürge – videonun sonunda izleyiciye sorulacak iki ürün\n"    "/fiyat NO 1.249 – videonun fiyat etiketini elle girer\n"
+    "/siradaki airfryer | robot süpürge – videonun sonunda izleyiciye sorulacak iki ürün\n"
     "/tekrar NO – videonun sesini ve kurgusunu yeniden yapar; /tekrar NO tam analizi de yeniler\n\n"
     "Ayarlar:\n"
     "/ayarlar – hangi ayarların tamam olduğunu gösterir\n"
@@ -91,7 +91,7 @@ YARDIM = (
 
 KONTROL = (
     "Yüklemeden önce 2 dakikalık kontrol:\n"
-    "☐ Ürün adı ve fiyat doğru mu?\n"
+    "☐ Ürün adı doğru mu?\n"
     "☐ Hüküm yorumlarla uyumlu mu?\n"
     "☐ 'Denedim' gibi yanlış bir ifade var mı?\n"
     "☐ YouTube'da 'değiştirilmiş veya sentetik içerik' kutusunu işaretle.\n"
@@ -912,10 +912,10 @@ def yayin_kontrolu(veri, no):
     genel = len(ad.split()) <= 2 or ad.lower() == str(veri.get("kategori") or "").lower()
     satirlar.append(f"⚠️ Ürün adı genel görünüyor: \"{ad}\". Düzeltmek için: /tekrar {no} MARKA MODEL" if genel
                     else f"✅ Ürün adı: {ad}")
-    if veri.get("fiyat") and veri.get("puan"):
-        satirlar.append("✅ Fiyat ve puan var")
+    if veri.get("puan"):
+        satirlar.append("✅ Puan var")
     else:
-        satirlar.append(f"⚠️ Fiyat ya da puan yok. Fiyatı elle girmek için: /fiyat {no} 1.249")
+        satirlar.append("⚠️ Puan yok. Ürün sayfasının ekran görüntüsünü eklersen çıkar")
     n = veri.get("urun_yorumu", veri.get("okunan_yorum", 0))
     if n >= 150:
         satirlar.append(f"✅ {n} ürün yorumu okundu")
@@ -1369,7 +1369,6 @@ def main():
     uygulama.add_handler(CallbackQueryHandler(tema_secildi, pattern=r"^tema:"))
     uygulama.add_handler(CommandHandler("dene", dene_komutu))
     uygulama.add_handler(CommandHandler("siradaki", siradaki_komutu))
-    uygulama.add_handler(CommandHandler("fiyat", fiyat_komutu))
     uygulama.add_handler(CallbackQueryHandler(okunus_secildi, pattern=r"^oku:"))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("zip"), guncelleme_al))

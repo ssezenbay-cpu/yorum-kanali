@@ -609,7 +609,7 @@ class Kurgu:
         site_yorum = int(sitede.group(1).replace(".", "")) if sitede else 0
         tarih = v.get("tarih") or datetime.now().strftime("%d.%m.%Y")
         oran = f"{okunan}/{site_yorum}" if 0 < okunan <= site_yorum else str(okunan)
-        fiyat = [str(v["fiyat"])] if v.get("fiyat") else []
+        fiyat = []  # fiyat videoda gösterilmez (Samet'in kararı; fiyat birkaç günde eskiyor)
         puan = [f"★ {v['puan']}"] if v.get("puan") else []
         puan_uzun = [f"★ {v['puan']} ({puan_sayisi.group(1)})"] if (v.get("puan") and puan_sayisi) else puan
         veri_ = [f"{oran} yorum okundu · {tarih}"] if okunan else []
