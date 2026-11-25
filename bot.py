@@ -779,6 +779,39 @@ async def _haftalik_dongu(uygulama):
         await asyncio.sleep(120)
 
 
+def yayin_kontrolu(veri, no):
+    """Yayından önce bakılacakları tek tek işaretler: ✅ tamam, ⚠️ dikkat, ❌ düzelt."""
+    satirlar = []
+    if veri.get("urun_gorseli") or veri.get("urun_fotograflari"):
+        satirlar.append("✅ Ürün fotoğrafı var")
+    else:
+        satirlar.append(f"❌ Ürün fotoğrafı yok (videoda adı yazıyor). Fotoğraf gönder, sonra /tekrar {no}")
+    ad = str(veri.get("urun_adi") or "").strip()
+    genel = len(ad.split()) <= 2 or ad.lower() == str(veri.get("kategori") or "").lower()
+    satirlar.append(f"⚠️ Ürün adı genel görünüyor: \"{ad}\". Düzeltmek için: /tekrar {no} MARKA MODEL" if genel
+                    else f"✅ Ürün adı: {ad}")
+    if veri.get("fiyat") and veri.get("puan"):
+        satirlar.append("✅ Fiyat ve puan var")
+    else:
+        satirlar.append("⚠️ Fiyat ya da puan yok. Ürün sayfasının ekran görüntüsünü eklersen çıkar")
+    n = veri.get("urun_yorumu", veri.get("okunan_yorum", 0))
+    if n >= 150:
+        satirlar.append(f"✅ {n} ürün yorumu okundu")
+    elif n >= 100:
+        satirlar.append(f"⚠️ {n} ürün yorumu: sınırda, 150+ daha güvenilir")
+    else:
+        satirlar.append(f"❌ {n} ürün yorumu: az (videoda 'sonuç kesin değil' deniyor). Daha çok yorum ekle")
+    if miksaj.muzik_listesi() and str(A.MUZIK) not in ("0", "kapali", "kapalı"):
+        satirlar.append("✅ Müzik var")
+    else:
+        satirlar.append("⚠️ Müzik yok. Bota bir mp3 gönder")
+    if veri.get("uyarilar"):
+        satirlar.append(f"⚠️ Analizde {len(veri['uyarilar'])} uyarı var (aşağıda)")
+    tamam = not any(s.startswith(("❌", "⚠️")) for s in satirlar)
+    satirlar.append("Hepsi ✅: yayınlayabilirsin." if tamam else "Önce işaretli olanlara bak.")
+    return "YAYIN KONTROLÜ:\n" + "\n".join(satirlar)
+
+
 def paylasim_metni(veri, no):
     etiketler = " ".join("#" + e for e in veri.get("etiketler", []) if e)
     kaynak = f"Okunan yorumlar: {arastirma.kaynak_satiri(veri)}.\n" if veri.get("kaynaklar") else ""
@@ -799,7 +832,7 @@ def paylasim_metni(veri, no):
     if veri.get("uyarilar"):
         parcalar.append("⚠️ DİKKAT:\n" + "\n".join("• " + u for u in veri["uyarilar"]))
     parcalar.append(KONTROL)
-    return "\n\n".join(parcalar)
+    return yayin_kontrolu(veri, no) + "\n\n" + "\n\n".join(parcalar)
 
 
 async def _uret(context: ContextTypes.DEFAULT_TYPE, chat_id, ilk_mesaj, analiz_cagir, gorseller, hata_eki):
@@ -846,8 +879,6 @@ async def _uret(context: ContextTypes.DEFAULT_TYPE, chat_id, ilk_mesaj, analiz_c
             await context.bot.send_video(chat_id, dosya, caption=f"Yorum dosyası #{no}", supports_streaming=True,
                                          read_timeout=180, write_timeout=180)
         await context.bot.send_message(chat_id, paylasim_metni(veri, no))
-        if not miksaj.muzik_listesi():
-            await context.bot.send_message(chat_id, MUZIK_YOK)
         return True
 
 
@@ -977,7 +1008,8 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(cikti, "rb") as dosya:
             await update.message.reply_video(dosya, caption=f"Yorum dosyası #{no}", supports_streaming=True,
                                              read_timeout=180, write_timeout=180)
-        await update.message.reply_text(paylasim_metni(veri, no) if tam else "Seslendirilen metin:\n" + konusma)
+        await update.message.reply_text(paylasim_metni(veri, no) if tam else
+                                        yayin_kontrolu(veri, no) + "\n\nSeslendirilen metin:\n" + konusma)
 
 
 async def hazirla(update: Update, context: ContextTypes.DEFAULT_TYPE):
