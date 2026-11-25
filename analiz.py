@@ -25,7 +25,7 @@ Görevin: yalnızca bu görüntülerde gerçekten gördüğün bilgiye dayanarak
 
 Kesin kurallar:
 1. Hiçbir bilgi uydurma. Fiyat, puan veya toplam yorum sayısı okunamıyorsa boş bırak ve "uyarilar" listesine yaz.
-2. "okunan_yorum" = görüntülerde metnini gerçekten okuyabildiğin yorum sayısı.
+2. "okunan_yorum" = görüntülerde metnini gerçekten okuyabildiğin yorum sayısı. Sitenin kendi "Değerlendirme Özeti" gibi yapay zekâ özetleri, puan dağılımı grafikleri ve satıcı bilgileri yorum değildir: sayılmaz, övgü ya da şikâyet kaynağı olarak kullanılmaz.
 3. Ürünü anlatmayan yorumlar sayılmaz: kargo hızı, paketleme, satıcının ilgisi, "güler yüzlü", "teşekkürler", "tavsiye ederim" gibi tek başına bilgi vermeyen yorumlar ne övgü ne şikâyettir. Ürünün kendisini ilgilendirenler sayılır: kırık, eksik ya da taklit gelmesi, beden/kalıp, malzeme, performans, dayanıklılık.
    "urun_yorumu" = okunan yorumlardan ürünün kendisi hakkında bilgi veren yorum sayısı. Övgü ve şikâyet sayıları yalnızca bunların içinden sayılır ve urun_yorumu'nu geçemez.
 4. Senaryoda rakamlar örneklemden verilir: "ürünü anlatan 30 yorumun 12'si" gibi. Bağlam bölümünde kaç yorum okunduğunu ve kaçının ürünü anlattığını söyle (ör. "40 yorum okudum, 30'u ürünü anlatıyordu"). "Binlerce yorum", "herkes" gibi abartı yok.
