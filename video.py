@@ -333,45 +333,89 @@ def _sigdir(resim, en, boy):
     return tuval
 
 
+def _urun_adaylari(veri, resimler):
+    """Ürün görseli adayları, öncelik sırasıyla: tam ürün fotoğrafları, ekran görüntüsünden kırpılan, ilk görüntü.
+    Çok küçük kırpıntılar (bulanık çıkar) başka aday varsa elenir."""
+    def ac(i):
+        with Image.open(resimler[i]) as ham:
+            return ImageOps.exif_transpose(ham).convert("RGB")
+
+    adaylar, kullanilan = [], set()
+    for no in veri.get("urun_fotograflari") or []:
+        i = no - 1
+        if 0 <= i < len(resimler) and i not in kullanilan:
+            try:
+                adaylar.append(ac(i))
+                kullanilan.add(i)
+            except OSError:
+                pass
+    secim = veri.get("urun_gorseli") or {}
+    i = secim.get("goruntu", 1) - 1 if secim else 0
+    if 0 <= i < len(resimler):
+        try:
+            tam = ac(i)
+            kirpik = urun_gorseli_kirp(tam, secim.get("kutu") if secim else None)
+            if min(kirpik.size) >= 220:
+                adaylar.append(kirpik)
+            elif not adaylar:  # kutu çok küçük: bulanık çıkmasın diye görüntünün tamamı
+                adaylar.append(urun_gorseli_kirp(tam))
+        except OSError:
+            pass
+    if not adaylar:
+        adaylar.append(urun_gorseli_kirp(ac(0)))
+    return adaylar
+
+
+def _sigdir_panel(resim, en, boy):
+    """Açık zeminli fotoğrafı kırpmadan panele sığdırır (ad şeridinin üstünde kalır), en fazla 2 kat büyütür."""
+    zemin = _zemin(resim)[0]
+    tuval = Image.new("RGB", (en, boy), zemin)
+    alan_en, alan_boy = int(en * 0.9), int((boy - SERIT - 20) * 0.92)
+    oran = min(alan_en / resim.width, alan_boy / resim.height, 2.0)
+    kopya = resim.resize((max(1, int(resim.width * oran)), max(1, int(resim.height * oran))), Image.LANCZOS)
+    tuval.paste(kopya, ((en - kopya.width) // 2, (boy - SERIT - 20 - kopya.height) // 2 + 10))
+    return tuval
+
+
 class Kurgu:
     def __init__(self, veri, resimler, no, kelimeler=(), sahne_baslari=(), tema=None):
         self.veri = veri
         self.no = no
         self.kelimeler = list(kelimeler)
         self.sahne_baslari = list(sahne_baslari)
-        secim = veri.get("urun_gorseli") or {}
-        indeks = secim.get("goruntu", 1) - 1 if secim else 0
-        indeks = indeks if 0 <= indeks < len(resimler) else 0
-        with Image.open(resimler[indeks]) as ham:
-            kaynak = ImageOps.exif_transpose(ham).convert("RGB")
-        self.urun = urun_gorseli_kirp(kaynak, secim.get("kutu") if secim else None)
         pw, ph = PANEL[2] - PANEL[0], PANEL[3] - PANEL[1]
         self.panel_boyut = (pw, ph)
-        self.kesik = urunu_ayikla(self.urun)
+        self.urun_alani = ph - SERIT - 10
+        # Ürün görseli: önce kullanıcının gönderdiği tam ürün fotoğrafları, sonra ekran görüntüsünden kırpılan.
+        adaylar = _urun_adaylari(veri, resimler)
+        kesikler = []
+        for aday in adaylar:
+            if len(kesikler) >= 4:
+                break
+            kesik = urunu_ayikla(aday, tam_olmali=bool(kesikler))
+            if kesik is not None:
+                kesikler.append(kesik)
+        self.kesik = kesikler[0] if kesikler else None
+        self.urun = adaylar[0] if kesikler else max(adaylar, key=lambda a: min(a.size))
         tema = tema or A.VIDEO_TEMA or "canli"
         self.tema = tema if tema in TEMALAR else "canli"
         self.p = p = tema_paleti(self.tema, urun_tonu(self.kesik if self.kesik is not None else self.urun))
         self.arka = _arka_plan(p)
         self.desen, self.desen_adim = _desen(p["desen"], p["desen_renk"]) if p["desen"] else (None, 0)
+        self.sigdir = False
         if self.kesik is not None:
             # Zeminden ayrılmış ürün: renkli zeminde, gölgeli ve hafifçe süzülerek.
             # Birden fazla temiz ürün fotoğrafı varsa her sahnede başka açı gösterilir.
-            self.urun_alani = ph - SERIT - 10
-            kesikler = [self.kesik]
-            for no_ in veri.get("urun_fotograflari") or []:
-                if no_ - 1 == indeks or not 0 <= no_ - 1 < len(resimler) or len(kesikler) >= 4:
-                    continue
-                try:
-                    with Image.open(resimler[no_ - 1]) as ham:
-                        ek = urunu_ayikla(ImageOps.exif_transpose(ham).convert("RGB"), tam_olmali=True)
-                except OSError:
-                    ek = None
-                if ek is not None:
-                    kesikler.append(ek)
             self.kesikler = [self._hazirla(kesik) for kesik in kesikler]
         else:
-            # Zemini dolu fotoğraf: paneli tamamen kaplar (beyaz boşluk yok), yavaş kadraj hareketi
-            self.panel_kaynak = kapla(self.urun, int(pw * 1.25), int(ph * 1.25), (0.5, 0.45))
+            ort, yakin = _zemin(self.urun)
+            if yakin >= 0.6 and min(ort) >= 185:
+                # Açık zeminli ama ayrılamayan fotoğraf: ürün kırpılmadan, tamamı görünecek şekilde sığdırılır
+                self.sigdir = True
+                self.panel_kaynak = _sigdir_panel(self.urun, pw, ph)
+            else:
+                # Zemini dolu fotoğraf: paneli tamamen kaplar, yavaş kadraj hareketi
+                self.panel_kaynak = kapla(self.urun, int(pw * 1.25), int(ph * 1.25), (0.5, 0.45))
             golge = Image.new("L", (G, Y), 0)
             ImageDraw.Draw(golge).rounded_rectangle((PANEL[0], PANEL[1] + 18, PANEL[2], PANEL[3] + 18), 34,
                                                      fill=int(255 * p["golge"]))
@@ -489,7 +533,10 @@ class Kurgu:
             resim.paste(self.ad_seridi, (serit_x, serit_y), self.ad_seridi)
             return
         kaynak = self.panel_kaynak
-        z, cx, cy = self._kadraj(t)
+        if self.sigdir:
+            z, cx, cy = 1 + 0.04 * min(1.0, t / 30), 0.5, 0.5
+        else:
+            z, cx, cy = self._kadraj(t)
         z *= self._vurus(t)
         ken, kboy = min(kaynak.width, kaynak.width / z), min(kaynak.height, kaynak.height / z)
         sol = min(max(0, cx * kaynak.width - ken / 2), kaynak.width - ken)
@@ -635,9 +682,13 @@ class Kurgu:
         for i, (sayi, etiket, renk) in enumerate(bloklar):
             gir = self._kelime_zamani(1, sayi, i * 0.9)
             ilerleme = yumusak((t - gir) / 0.3)
-            if ilerleme <= 0:
-                continue
             x = KENAR - 40 + i * yarim + dx
+            if ilerleme <= 0:  # sayı söylenene kadar kart boş görünmesin: soluk "?" ve etiket
+                genislik = c.textlength("?", font=F(124))
+                c.text((x + (yarim - genislik) / 2, ust + 30), "?", font=F(124), fill=p["iz"])
+                genislik = c.textlength(etiket, font=F(38, False))
+                c.text((x + (yarim - genislik) / 2, ust + 190), etiket, font=F(38, False), fill=p["ikincil"])
+                continue
             y = ust + 30 + int((1 - ilerleme) * 30)
             font = F(int(124 + 30 * (1 - min(1.0, (t - gir) / 0.35))))
             genislik = c.textlength(sayi, font=font)

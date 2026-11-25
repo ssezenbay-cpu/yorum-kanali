@@ -12,7 +12,7 @@ import ayarlar as A
 from veriler import GRUPLAR, fiyat_sayi
 
 ROLLER = ["acilis", "baglam", "ovgu", "sikayet", "hukum", "kapanis"]
-SENARYO_SURUMU = 5  # kurallar değişince artar; /tekrar eski metni görünce analizi yeniler
+SENARYO_SURUMU = 6  # kurallar değişince artar; /tekrar eski metni görünce analizi yeniler
 HUKUMLER = {"ALINIR", "ALINMAZ", "DİKKATLİ AL"}
 log = logging.getLogger("analiz")
 YASAK_IFADELER = ["denedim", "kullandım", "test ettim", "aldım ve", "bende de"]
@@ -118,17 +118,22 @@ Kesin kurallar:
    övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL". Ürünü anlatan yorum 30'dan azsa hükmü temkinli kur.
 6. Dürüst oran: azınlıktaki bir bulguya "çoğu", "herkes", "neredeyse hepsi" deme; sayıyı söyle.
 7. Konuşur gibi yaz. Toplam 40-50 kelime. Her cümle kısa, en fazla 9 kelime; yan cümle yok.
-   Fiyatı, puanı ve toplam değerlendirme sayısını söyleme; ekranda yazıyor.
+   Fiyatı ve toplam değerlendirme sayısını söyleme; ekranda yazıyor. Puanı yalnızca açılıştaki çelişki için kullanabilirsin.
 8. Bölümler:
    acilis: en şaşırtıcı somut bulgu, rakamlı. Ürünün kendisiyle ilgili olsun (dayanıklılık, performans, kullanım).
-     Ürünü hiç görmemiş biri de ilk duyuşta anlamalı; açıklamasız teknik terim yok. Hükmü söyleme.
+     Merak boşluğu bırak: sayıyı söyle, konuyu sonraya sakla ("Bu süpürgeyi alan 5 kişi aynı şeyden şikâyet ediyor").
+     Konu şikâyet (ya da övgü) bölümünde açılır; orada açılış cümlesini tekrar etme.
+     Sitedeki puan yüksekse (4,5 ve üstü) ve şikâyetler belirginse bu çelişkiyi kullanabilirsin
+     ("4,7 puanlı süpürgeyi alan 5 kişi aynı şeyi yazıyor"). Ürünü hiç görmemiş biri de anlamalı; hükmü söyleme.
    baglam: tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı, ardından "Hüküm sonda."
    ovgu: bağlamdaki sayıyı tekrar etmeden doğrudan "12 kişi ..." diye başlar; en çok övülen iki konu.
    sikayet: kısa bir soruyla başlar ("Peki sorun ne?" gibi), sonra en çok şikâyet edilen iki konu, sayılarıyla.
-   hukum: "Hüküm: ..." ve kime uygun olduğu, kısa.
+   hukum: "Hüküm: ..." ve kime uygun olduğu, kısa. "kime_uygun" somut bir kullanım ya da kişi tarifi olsun
+     ("küçük evde hızlı temizlik için", "uzun süre çalışacaksan değil"); "riski göze alanlar" gibi boş ifade yok.
    kapanis: "Sıradaki ürün ne olsun? Yorumlara yaz. Yorum dosyası #N."
-9. ekran_acilis: ilk karedeki büyük yazı, en fazla 7 kelime, oranı göster: "7/46 alıcı: boya soyuluyor" gibi.
+9. ekran_acilis: ilk karedeki büyük yazı, en fazla 7 kelime, oranı göster ve merakı korusun: "7/46 alıcı aynı şeyi yazmış" gibi.
 10. ovulenler ve sikayetler yalnızca verilen listeden seçilir; konu adı ve sayı listedekiyle aynı. Aynı konu iki tarafta olmasın.
+    Yalnızca 1 yorumda geçen konuyu seçme (listede 2 ve üstü varsa).
 
 Yalnızca geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma."""
 
@@ -260,11 +265,16 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu=""):
     if sayim["okunan_yorum"] < 5 or sayim["urun_yorumu"] < 8:
         raise AnalizHatasi(
             f"{sayim['okunan_yorum']} yorum okundu ama yalnızca {sayim['urun_yorumu']} tanesi ürünü anlatıyor "
-            "(gerisi kargo, teşekkür vb.). 1-3 yıldız ve fotoğraflı yorumlardan daha fazla görüntü gönderip tekrar dene.")
+            "(gerisi kargo, teşekkür vb.). Yorumları sitede 'En yeni' sıralamasıyla açıp daha fazla görüntü gönder.")
     arti = [k for k in sayim["konular"] if k["yon"] == "arti"]
     eksi = [k for k in sayim["konular"] if k["yon"] == "eksi"]
+    # tek yorumda geçen konular, daha güçlüleri varsa seçilmesin
+    arti = [k for k in arti if k["sayi"] >= 2] if sum(k["sayi"] >= 2 for k in arti) >= 2 else arti
+    eksi = [k for k in eksi if k["sayi"] >= 2] if sum(k["sayi"] >= 2 for k in eksi) >= 2 else eksi
+    puan, toplam_ = str(okuma.get("puan") or "").strip(), str(okuma.get("toplam_yorum") or "").strip()
     tablo = "\n".join(
         [f"Ürün: {okuma.get('urun_adi', '')} ({okuma.get('kategori', '')})",
+         f"Sitedeki puan: {puan or 'bilinmiyor'}" + (f" ({toplam_} değerlendirme)" if toplam_ else ""),
          f"Okunan yorum: {sayim['okunan_yorum']}", f"Ürünün kendisini anlatan yorum: {sayim['urun_yorumu']}",
          "Övülen konular (kaç yorumda geçtiği):"] + [f"- {k['ad']}: {k['sayi']}" for k in arti[:8]]
         + ["Şikâyet edilen konular (kaç yorumda geçtiği):"] + [f"- {k['ad']}: {k['sayi']}" for k in eksi[:8]])
@@ -291,10 +301,13 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu=""):
     veri = dogrula(veri, no)
     izinli = {sayim["okunan_yorum"], sayim["urun_yorumu"], no} | {k["sayi"] for k in sayim["konular"]}
     metin = " ".join(veri["senaryo"].values())
-    urun_sayilari = set(re.findall(r"\d+", str(veri.get("urun_adi", ""))))
+    urun_sayilari = set(re.findall(r"\d+", f"{veri.get('urun_adi', '')} {puan}"))
     for sayi in sorted(set(re.findall(r"\b\d+\b", metin))):
         if int(sayi) not in izinli and sayi not in urun_sayilari:
             veri["uyarilar"].append(f"Metinde sayımda olmayan bir sayı var: {sayi}. Yayından önce kontrol et.")
+    if sayim["urun_yorumu"] < 30:
+        veri["uyarilar"].append(f"Örneklem küçük: ürünü anlatan {sayim['urun_yorumu']} yorum var. "
+                                "Daha fazla yorum (sitede 'En yeni' sıralamasıyla) daha güvenilir sonuç verir.")
     veri["sayim"] = sayim
     return veri
 
@@ -335,7 +348,7 @@ def dogrula(veri, no):
     if urun_yorumu < 8:
         raise AnalizHatasi(
             f"{okunan} yorum okundu ama yalnızca {urun_yorumu} tanesi ürünü anlatıyor (gerisi kargo, teşekkür vb.). "
-            "1-3 yıldız ve fotoğraflı yorumlardan daha fazla görüntü gönderip tekrar /hazirla yaz.")
+            "Yorumları sitede 'En yeni' sıralamasıyla açıp daha fazla görüntü gönder, sonra /hazirla yaz.")
     veri["urun_yorumu"] = urun_yorumu
     veri["satici"] = str(veri.get("satici") or "").strip()
 

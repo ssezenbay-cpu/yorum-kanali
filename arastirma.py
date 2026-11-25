@@ -118,6 +118,11 @@ def arastir(urun, no, gorseller=()):
     kaynaklar = [{"ad": ad, "okunan": sayi, "adres": adresler.get(ad, "")}
                  for ad, sayi in sorted(sayim["kaynak_sayisi"].items(), key=lambda x: -x[1])]
     not_ = KAYNAK_NOTU.format(kaynaklar=", ".join(f"{k['ad']} {k['okunan']}" for k in kaynaklar) or "belirtilmedi")
+    sikayet_sitesi = sum(k["okunan"] for k in kaynaklar if "ikâyet" in k["ad"].lower() or "ikayet" in k["ad"].lower())
+    pay = sikayet_sitesi / max(1, sayim["okunan_yorum"])
+    if pay > 0.35:
+        not_ += (f" DİKKAT: okunanların yüzde {int(pay * 100)}'i şikâyet sitesinden. Şikâyetleri 'şikâyet sitelerinde' "
+                 "diye ayrıca belirt, oranı tüm alıcılara genelleme; sitedeki puan yüksekse hükmü 'ALINMAZ' yapma.")
     try:
         veri = senaryo_yaz(istemci, okuma, no, kaynak_notu=not_)
     except AnalizHatasi as hata:
@@ -127,6 +132,9 @@ def arastir(urun, no, gorseller=()):
             f"İnternette bu model için yeterli ürün yorumu bulunamadı ({hata.args[0].split(' (')[0]}). "
             "Ürün adını biraz daha genel yaz ya da birkaç yorum ekran görüntüsü gönderip tekrar dene.") from hata
     veri["okuma"] = {"konular": okuma.get("konular"), "yorumlar": okuma.get("yorumlar")}
+    if pay > 0.35:
+        veri["uyarilar"].append(f"Okunan yorumların yüzde {int(pay * 100)}'i şikâyet sitesinden; örneklem olumsuza kayık. "
+                                "Pazaryeri yorumlarının ekran görüntülerini de ekleyip tekrar denemek daha dengeli olur.")
     veri["kaynaklar"] = kaynaklar
     veri["arama"] = urun
     return veri
