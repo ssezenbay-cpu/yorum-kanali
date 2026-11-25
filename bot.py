@@ -1099,7 +1099,9 @@ async def hazirla(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Görüntüsüz yol: /arastir ÜRÜN ADI")
         return
     urun_adi = " ".join(context.args).strip()[:80]
-    tamam = await _uret(context, chat_id, f"1/3 Yorumları okuyorum… ({len(liste)} görüntü)",
+    grup = -(-min(len(liste), 200) // 40)
+    sure_ = "1-2 dakika" if grup == 1 else f"{grup} grup, {grup + 1}-{grup * 2} dakika"
+    tamam = await _uret(context, chat_id, f"1/3 Yorumları okuyorum… ({len(liste)} görüntü, {sure_})",
                         lambda no: analiz_et(liste, no, urun_adi), liste,
                         "Görüntüler duruyor. Ekleme yapıp /hazirla ile tekrar deneyebilir ya da /iptal ile silebilirsin.")
     if tamam:
