@@ -28,7 +28,7 @@ import miksaj
 import okunus
 import urun_avi
 from analiz import (ROLLER, SENARYO_SURUMU, AnalizHatasi, analiz_et, analiz_metinden, anthropic_dogrula,
-                    paketi_dogrula, sayim_metni)
+                    metni_yeniden_yaz, paketi_dogrula, sayim_metni)
 from demo import demo_uret
 from ayarlar import (CALISMA, CIKTI, GELEN, KOK, TELEGRAM_PROXY, TELEGRAM_TOKEN, eksik_ayarlar,
                      maskele, no_kaydet, sonraki_no)
@@ -396,7 +396,7 @@ async def muzik_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     durum_ = "açık" if str(A.MUZIK) not in ("0", "kapali", "kapalı") else "kapalı"
     satirlar = [f"Müzik: {durum_}, ses seviyesi {miksaj.muzik_sesi():.2f}"]
     satirlar += [f"{i}. {p.name}" for i, p in enumerate(liste, 1)] or ["Kayıtlı müzik yok. Bota bir mp3 gönder."]
-    satirlar.append("\n/muzik sil N · /muzik ac | kapat · /muzik ses 0.18 (konuşma sırasında müzik ayrıca kısılır)")
+    satirlar.append("\n/muzik sil N · /muzik ac | kapat · /muzik ses 0.35 (konuşma sırasında müzik ayrıca kısılır)")
     await update.message.reply_text("\n".join(satirlar))
 
 
@@ -999,12 +999,20 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (IndexError, ValueError):
         await update.message.reply_text("Kullanım: /tekrar DOSYA_NO   (ör. /tekrar 1)\n"
                                         "Analizi de yenilemek için: /tekrar 1 tam\n"
-                                        "Ürün adını düzeltmek için: /tekrar 1 MARKA MODEL")
+                                        "Ürün adını düzeltmek için: /tekrar 1 MARKA MODEL\n"
+                                        "Yalnızca metni yeniden yazmak için: /tekrar 1 metin  (kararı sen belirlemek "
+                                        "istersen: /tekrar 1 metin DİKKATLİ AL)")
         return
     klasor = CALISMA / f"dosya_{no:03d}"
     analiz_yolu = klasor / "analiz.json"
     tam = len(context.args) > 1 and context.args[1].lower() in ("tam", "analiz")
-    yeni_ad = " ".join(context.args[2 if tam else 1:]).strip()[:80]  # /tekrar 3 Tefal Ingenio 3'lü set
+    sadece_metin = len(context.args) > 1 and context.args[1].lower() == "metin"
+    zorunlu = ""
+    if sadece_metin:
+        istenen = " ".join(context.args[2:]).upper().replace("I", "I").strip()
+        zorunlu = {"ALINIR": "ALINIR", "ALINMAZ": "ALINMAZ", "DİKKATLİ AL": "DİKKATLİ AL",
+                   "DIKKATLI AL": "DİKKATLİ AL"}.get(istenen, "")
+    yeni_ad = "" if sadece_metin else " ".join(context.args[2 if tam else 1:]).strip()[:80]
     gorseller = sorted(p for p in klasor.iterdir()
                        if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and p.name != "kapak.png") \
         if klasor.exists() else []
@@ -1055,7 +1063,13 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         durum_mesaji = await update.message.reply_text(
             f"#{no} yeniden analiz ediliyor…" if tam else f"#{no} yeniden seslendiriliyor…")
         try:
-            if tam:
+            if sadece_metin and veri is not None:
+                veri = await asyncio.to_thread(metni_yeniden_yaz, veri, no, zorunlu)
+                analiz_yolu.write_text(json.dumps(veri, ensure_ascii=False, indent=1), encoding="utf-8")
+                video_kaydet(no, veri)
+                tam = True  # paylaşım metni de yenilensin
+                await durum_mesaji.edit_text(f"#{no} metni yenilendi (hüküm: {veri['hukum']}), seslendiriliyor…")
+            elif tam:
                 if (klasor / "yorum_paketi.json").exists():
                     paket = json.loads((klasor / "yorum_paketi.json").read_text(encoding="utf-8"))
                     if yeni_ad:

@@ -610,7 +610,7 @@ class Kurgu:
             toplam_ = str(v["toplam_yorum"]).strip()
             if toplam_.isdigit() and len(toplam_) > 3:
                 toplam_ = f"{int(toplam_):,}".replace(",", ".")
-            parcalar.append(f"{toplam_} değerlendirme")
+            parcalar.append(toplam_ if re.search(r"[a-zçğıöşü]", toplam_.lower()) else f"{toplam_} değerlendirme")
         font = F(30)
         while parcalar:
             genislikler = [olc(c, m, font) + 40 for m in parcalar]

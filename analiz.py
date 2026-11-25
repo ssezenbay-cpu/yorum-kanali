@@ -124,7 +124,10 @@ Kesin kurallar:
 5. Hüküm: şikâyetler ürünün temel işlevini bozuyorsa ya da ürünü anlatan yorumların yarısına yakınındaysa "ALINMAZ";
    övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL". Ürünü anlatan yorum 100'den azsa hüküm bölümünde
    bunu kısaca söyle ("Yorum az, sonuç kesin değil.").
+   Güvenlik riski taşıyan bir şikâyet (sap/kulp kopması, kırılma, yanma, erime, elektrik, aşırı ısınma, patlama,
+   keskin kenar) ürünü anlatan yorumların %8'inden fazlasında geçiyorsa hüküm "ALINIR" olamaz.
 6. Dürüst oran: azınlıktaki bir bulguya "çoğu", "herkes", "neredeyse hepsi" deme; sayıyı söyle.
+   İstisna: 31 sayısını sesli metinde söyleme (Türkçede argo şakaya döner); "otuzu aşkın" de. Ekranda 31 yazmaya devam eder.
 7. Konuşur gibi yaz. Toplam 40-50 kelime. Her cümle kısa, en fazla 9 kelime; yan cümle yok.
    Fiyatı ve toplam değerlendirme sayısını söyleme; ekranda yazıyor. Puanı yalnızca açılıştaki çelişki için kullanabilirsin.
 8. Bölümler:
@@ -279,7 +282,18 @@ def _iste(istemci, sistem, icerik, etiket, max_tokens=16000, model=None):
     raise AnalizHatasi("Yapay zekâ geçerli bir yanıt vermedi.")
 
 
-def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi=""):
+GUVENLIK = re.compile(r"sap|kulp|kırıl|kop|düş|yan[ıd]|yanık|eri[dm]|elektrik|çarp|ısın|patla|alev|keskin|kıvılcım")
+
+
+def _guvenlik_riski(sayim):
+    """Güvenlikle ilgili görünen ve ürün yorumlarının %8'inden fazlasında geçen şikâyet konusu (yoksa None)."""
+    for k in sayim["konular"]:
+        if k["yon"] == "eksi" and GUVENLIK.search(k["ad"].lower()) and k["sayi"] > 0.08 * max(1, sayim["urun_yorumu"]):
+            return k
+    return None
+
+
+def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi="", zorunlu_hukum=""):
     """Sayımı yapar, metni bu sayılarla yazdırır ve doğrulanmış video verisini döndürür."""
     if "hata" in okuma:
         raise AnalizHatasi(okuma["hata"])
@@ -308,8 +322,20 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi=""):
         tablo += "\n" + kaynak_notu
     istek = (f"Bu video \"Yorum dosyası #{no}\" olacak.\n\n{tablo}\n\nBu sayılarla şu yapıda JSON döndür:\n"
              + SENARYO_SEMA.format(no=no))
-    yazi = _iste(istemci, SENARYO_SISTEM.replace("{kanal}", A.KANAL_ADI), [{"type": "text", "text": istek}],
-                 "Senaryo", max_tokens=8000)
+    risk = _guvenlik_riski(sayim)
+    if zorunlu_hukum:
+        istek = f"Hüküm kesinlikle \"{zorunlu_hukum}\" olacak; metni buna göre yaz.\n" + istek
+    sistem_ = SENARYO_SISTEM.replace("{kanal}", A.KANAL_ADI)
+    yazi = _iste(istemci, sistem_, [{"type": "text", "text": istek}], "Senaryo", max_tokens=8000)
+    if not zorunlu_hukum and risk and str(yazi.get("hukum", "")).upper() == "ALINIR":
+        # Güvenlik şikâyeti yüksekken "ALINIR" çıktı: metin bu kuralla yeniden yazılır (tutarlı kalsın diye)
+        log.info("Güvenlik şikâyeti (%s %d) varken ALINIR geldi; DİKKATLİ AL ile yeniden yazılıyor", risk["ad"], risk["sayi"])
+        zorunlu_hukum = "DİKKATLİ AL"
+        istek = (f"Hüküm kesinlikle \"DİKKATLİ AL\" olacak: \"{risk['ad']}\" bir güvenlik riski ve "
+                 f"{risk['sayi']} yorumda geçiyor. Metni buna göre yaz.\n" + istek)
+        yazi = _iste(istemci, sistem_, [{"type": "text", "text": istek}], "Senaryo", max_tokens=8000)
+    if zorunlu_hukum:
+        yazi["hukum"] = zorunlu_hukum
     veri = {alan: okuma.get(alan, "") for alan in ("urun_adi", "kategori", "grup", "fiyat", "puan",
                                                    "toplam_yorum", "satici")}
     veri.update({k: yazi.get(k) or "" for k in ("hukum", "kime_uygun", "uygun", "uygun_degil", "ekran_acilis",
@@ -340,10 +366,21 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi=""):
                 break
     veri["kaynak_etiketi"] = kaynak_etiketi or str(okuma.get("site") or "").strip() or "ekran görüntüleri"
     veri["tarih"] = datetime.now().strftime("%d.%m.%Y")
-    veri["uyarilar"] = list(okuma.get("uyarilar") or [])
+    gorulen_, uyarilar_ = set(), []
+    for u in okuma.get("uyarilar") or []:
+        u = " ".join(str(u).split())
+        anahtar_ = _sade(u)[:40]
+        if not u or anahtar_ in gorulen_ or re.search(r"bu grupta|ürün sayfası yok|site adı|devamını oku|"
+                                                       r"görünmüyor|okunamadı|belirsiz|kesik", u.lower()):
+            continue  # görüntü okumanın ayrıntıları; kullanıcıya gereksiz
+        gorulen_.add(anahtar_)
+        uyarilar_.append(u)
+    veri["uyarilar"] = uyarilar_[:5]
     if not veri["senaryo"]:
         raise AnalizHatasi("Metin yazılamadı. Tekrar dene.")
     veri = dogrula(veri, no)
+    for rol in ROLLER:  # 31 sesli söylenmesin (argo şakaya döner); ekrandaki çubukta 31 yazmaya devam eder
+        veri["senaryo"][rol] = re.sub(r"\b31(?=\s)", "otuzu aşkın", veri["senaryo"][rol])
     if sayim["urun_yorumu"] < 100 and "kesin" not in veri["senaryo"]["hukum"].lower():
         veri["senaryo"]["hukum"] = veri["senaryo"]["hukum"].rstrip(" .") + ". Yorum az, sonuç kesin değil."
     izinli = {sayim["okunan_yorum"], sayim["urun_yorumu"], no} | {k["sayi"] for k in sayim["konular"]}
@@ -549,6 +586,24 @@ def analiz_et(resimler, no, urun_adi=""):
     if len(resimler) > EN_FAZLA_GORUNTU:
         veri["uyarilar"].append(f"{len(resimler)} görüntü gönderildi; ilk {EN_FAZLA_GORUNTU} tanesi okundu.")
     return veri
+
+
+def metni_yeniden_yaz(veri, no, zorunlu_hukum=""):
+    """Kayıtlı sayımdan yalnızca video metnini yeniden yazar (görüntüler yeniden okunmaz; birkaç sentlik iş)."""
+    kayit = veri.get("okuma") or {}
+    if not kayit.get("yorumlar"):
+        raise AnalizHatasi("Bu videonun ayrıntılı sayım kaydı yok; /tekrar NO tam ile yeniden analiz et.")
+    okuma = {alan: veri.get(alan, "") for alan in ("urun_adi", "kategori", "grup", "fiyat", "puan", "toplam_yorum",
+                                                   "satici")}
+    okuma.update({"konular": kayit.get("konular") or [], "yorumlar": kayit["yorumlar"],
+                  "urun_gorseli": veri.get("urun_gorseli"), "urun_fotograflari": veri.get("urun_fotograflari") or []})
+    istemci = anthropic.Anthropic(api_key=A.ANTHROPIC_API_KEY)
+    yeni = senaryo_yaz(istemci, okuma, no, kaynak_etiketi=veri.get("kaynak_etiketi", ""), zorunlu_hukum=zorunlu_hukum)
+    for alan in ("kaynaklar", "arama", "urun_adi_kullanici"):
+        if alan in veri:
+            yeni[alan] = veri[alan]
+    yeni["okuma"] = kayit
+    return yeni
 
 
 METIN_SISTEM = """Sen "{kanal}" adlı Türkçe bir YouTube Shorts ve TikTok kanalının yorum okuyucususun.

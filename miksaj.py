@@ -140,7 +140,7 @@ def muzik_sesi():
     try:
         return max(0.02, min(0.5, float(str(A.MUZIK_SES).replace(",", "."))))
     except ValueError:
-        return 0.18
+        return 0.35
 
 
 def efektler_acik():
@@ -167,7 +167,7 @@ def ses_girdileri(ses_yolu, efekt_yolu, muzik_yolu, toplam):
             f"[{sira}:a]aformat=sample_rates={ORNEK}:channel_layouts=mono,atrim=0:{toplam:.2f},"
             f"loudnorm=I=-16:TP=-2:LRA=11,aresample={ORNEK},volume={muzik_sesi():.3f},afade=t=in:d=0.5,afade=t=out:st={max(0.0, toplam - 1.2):.2f}:d=1.2[m0]")
         # konuşma varken müzik kendiliğinden kısılır
-        filtre.append("[m0][yan]sidechaincompress=threshold=0.02:ratio=5:attack=20:release=300[muzik]")
+        filtre.append("[m0][yan]sidechaincompress=threshold=0.02:ratio=3:attack=30:release=350[muzik]")
         adlar.append("[muzik]")
     filtre.append("".join(adlar) + f"amix=inputs={len(adlar)}:normalize=0:duration=first,"
                   "alimiter=limit=0.95,aformat=channel_layouts=stereo[a]")
