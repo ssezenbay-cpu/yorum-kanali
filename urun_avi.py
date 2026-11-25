@@ -79,7 +79,7 @@ def _sor(istemci, istek, web=True):
     duzeltme_istendi = False
     durum = "?"
     for _ in range(8):
-        yanit = istemci.messages.create(model=A.CLAUDE_MODEL, max_tokens=4000, messages=mesajlar, **ek)
+        yanit = istemci.messages.create(model=A.CLAUDE_MODEL, max_tokens=16000, messages=mesajlar, **ek)
         icerik = list(yanit.content)
         durum = yanit.stop_reason
         aramalar = sum(1 for b in icerik if getattr(b, "type", "") == "server_tool_use")

@@ -201,7 +201,7 @@ def analiz_et(resimler, no):
     for deneme in range(2):
         yanit = istemci.messages.create(
             model=A.CLAUDE_MODEL,
-            max_tokens=6000,
+            max_tokens=16000,
             system=SISTEM.replace("{kanal}", A.KANAL_ADI),
             messages=mesajlar,
         )

@@ -67,7 +67,7 @@ def _calistir(istemci, sistem, icerik, araclar):
     duzeltme = False
     durum = "?"
     for _ in range(10):
-        yanit = istemci.messages.create(model=A.CLAUDE_MODEL, max_tokens=6000, system=sistem,
+        yanit = istemci.messages.create(model=A.CLAUDE_MODEL, max_tokens=16000, system=sistem,
                                         messages=mesajlar, tools=araclar)
         bloklar = list(yanit.content)
         durum = yanit.stop_reason
