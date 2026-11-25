@@ -80,6 +80,7 @@ YARDIM = (
     "/hiz 1.1 – konuşma hızı (1 = sesin kendi hızı; 1.15 üstü sonradan hızlandırılır, robotik duyulabilir)\n"
     "/muzik – videolara eklenen müzikler; müzik eklemek için bota mp3 gönder\n"
     "/efekt ac | kapat – geçiş, pop ve damga seslerini açar/kapatır\n"
+    "/okuma haiku | sonnet – yorumları okuyan model (haiku çok daha ucuz)\n"
     "/tema – videonun görünümünü seçtirir (canlı renk, açık stüdyo, sarı)\n\n"
     "Bakım:\n"
     "/guncelle – GitHub'dan son sürümü alıp kendini günceller\n"
@@ -397,6 +398,24 @@ async def muzik_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     satirlar += [f"{i}. {p.name}" for i, p in enumerate(liste, 1)] or ["Kayıtlı müzik yok. Bota bir mp3 gönder."]
     satirlar.append("\n/muzik sil N · /muzik ac | kapat · /muzik ses 0.18 (konuşma sırasında müzik ayrıca kısılır)")
     await update.message.reply_text("\n".join(satirlar))
+
+
+OKUMA_MODELLERI = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5"}
+
+
+async def okuma_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/okuma haiku | sonnet: yorumları okuyan model (Haiku çok daha ucuz, Sonnet daha dikkatli)."""
+    if not yetkili(update):
+        return
+    secim = context.args[0].lower() if context.args else ""
+    if secim in OKUMA_MODELLERI:
+        A.kaydet("OKUMA_MODELI", OKUMA_MODELLERI[secim])
+    simdiki = A.OKUMA_MODELI or A.CLAUDE_MODEL
+    ad = next((k for k, v in OKUMA_MODELLERI.items() if v == simdiki), simdiki)
+    await update.message.reply_text(
+        f"Yorumları okuyan model: {ad}\n"
+        "haiku: yaklaşık 20 kat ucuz, sonnet: daha dikkatli. Metni her durumda sonnet yazar.\n"
+        "Değiştirmek için: /okuma haiku  ya da  /okuma sonnet")
 
 
 async def efekt_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1195,6 +1214,7 @@ def main():
     uygulama.add_handler(CallbackQueryHandler(eski_goruntu_secildi, pattern=r"^eski:"))
     uygulama.add_handler(CommandHandler("muzik", muzik_komutu))
     uygulama.add_handler(CommandHandler("efekt", efekt_komutu))
+    uygulama.add_handler(CommandHandler("okuma", okuma_komutu))
     uygulama.add_handler(MessageHandler(filters.AUDIO | filters.Document.Category("audio/"), muzik_al))
     uygulama.add_handler(MessageHandler(filters.VIDEO | filters.Document.Category("video/"), kayit_al))
     uygulama.add_handler(CommandHandler("tema", tema_komutu))

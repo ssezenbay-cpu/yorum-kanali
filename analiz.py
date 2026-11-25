@@ -26,7 +26,7 @@ class AnalizHatasi(Exception):
 def _resim_parcasi(yol):
     with Image.open(yol) as im:
         im = ImageOps.exif_transpose(im).convert("RGB")
-        im.thumbnail((1568, 1568))
+        im.thumbnail((1300, 1300))  # yorum yazısı bu boyutta okunuyor; büyüğü maliyeti artırır
         tampon = io.BytesIO()
         im.save(tampon, "JPEG", quality=85)
     return {
@@ -258,11 +258,11 @@ def _maddeleri_duzelt(secilen, liste):
     return sonuc[:3]
 
 
-def _iste(istemci, sistem, icerik, etiket, max_tokens=16000):
+def _iste(istemci, sistem, icerik, etiket, max_tokens=16000, model=None):
     """Claude'a sorar, JSON döndürür; JSON gelmezse bir kez düzelttirir."""
     mesajlar = [{"role": "user", "content": icerik}]
     for deneme in range(2):
-        yanit = istemci.messages.create(model=A.CLAUDE_MODEL, max_tokens=max_tokens, system=sistem,
+        yanit = istemci.messages.create(model=model or A.CLAUDE_MODEL, max_tokens=max_tokens, system=sistem,
                                         messages=mesajlar)
         metin = "".join(getattr(b, "text", "") for b in yanit.content)
         log.info("%s yanıtı: durum=%s, %d karakter", etiket, yanit.stop_reason, len(metin))
@@ -528,7 +528,7 @@ def analiz_et(resimler, no, urun_adi=""):
                      "Önceki gruplardaki bir yorumun devamı ya da tekrarı görünüyorsa yine yaz (program tekrarları ayıklar). "
                      "Ürün sayfası bu grupta yoksa ürün bilgilerini boş, urun_gorseli null bırakabilirsin.\n\n" + istek)
         icerik.append({"type": "text", "text": istek})
-        sonuc = _iste(istemci, sistem, icerik, f"Okuma {grup_no}")
+        sonuc = _iste(istemci, sistem, icerik, f"Okuma {grup_no}", model=A.OKUMA_MODELI or None)
         if "hata" in sonuc and okuma is not None:
             log.warning("Grup %d okunamadı: %s", grup_no, sonuc["hata"])
             continue
@@ -595,7 +595,7 @@ def analiz_metinden(paket, gorseller, no):
              + "\n".join(satirlar) + "\n\nŞu yapıda JSON döndür (her yorum numarası için bir satır):\n"
              + METIN_SEMA.format())
     okuma = _iste(istemci, METIN_SISTEM.replace("{kanal}", A.KANAL_ADI), [{"type": "text", "text": istek}],
-                  "Metin okuma")
+                  "Metin okuma", model=A.OKUMA_MODELI or None)
     kaynak = str(paket.get("kaynak") or "").strip()
     gelen = {}
     for y in okuma.get("yorumlar") or []:

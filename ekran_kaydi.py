@@ -14,7 +14,7 @@ from PIL import Image
 from ayarlar import FFMPEG
 
 KARE_HIZI = 3          # saniyede alınan kare
-YENI_ESIK = 0.5        # ekran yüksekliğinin bu kadarı kadar kaydırılınca yeni kare tutulur
+YENI_ESIK = 0.62       # ekran yüksekliğinin bu kadarı kadar kaydırılınca yeni kare tutulur
 EN_FAZLA_KARE = 40
 SATIR = 240            # karşılaştırma için kare kaç satıra indirgenir
 
@@ -69,7 +69,9 @@ def kareleri_cikar(video_yolu, hedef_klasor, onek, en_fazla=EN_FAZLA_KARE):
         yazilan = []
         for i, kare in enumerate(secilen):
             yol = hedef_klasor / f"{onek}_k{i:03d}.jpg"
-            shutil.move(str(kare), yol)
+            with Image.open(kare) as im:  # üstteki durum çubuğu/arama ve alttaki menü yorum değil: kırp
+                en, boy = im.size
+                im.crop((0, int(boy * 0.08), en, int(boy * 0.93))).save(yol, quality=88)
             yazilan.append(yol)
         return yazilan, len(kareler)
     finally:
