@@ -23,7 +23,7 @@ def hiz_carpani():
     try:
         hiz = float(str(A.SES_HIZI).replace(",", "."))
     except ValueError:
-        hiz = 1.25
+        hiz = 1.1
     return max(0.8, min(1.6, hiz))
 
 

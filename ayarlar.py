@@ -26,7 +26,10 @@ GITHUB_DEPO = _al("GITHUB_DEPO", "ssezenbay-cpu/yorum-kanali")
 LINK_PROFILDE = _al("LINK_PROFILDE")  # satış ortaklığı linki profile eklenince "1" yapılır (/link ac)
 GITHUB_DAL = _al("GITHUB_DAL", "main")
 VIDEO_TEMA = _al("VIDEO_TEMA", "canli")  # canli | acik | sari | koyu  (/tema)
-SES_HIZI = _al("SES_HIZI", "1.25")       # seslendirme hızı çarpanı (/hiz)
+SES_HIZI = _al("SES_HIZI", "1.1")        # seslendirme hızı (/hiz); 1.15 üstü sonradan hızlandırılır
+MUZIK = _al("MUZIK", "1")                # gönderilen müzikler videoya eklensin mi (/muzik ac|kapat)
+MUZIK_SES = _al("MUZIK_SES", "0.18")     # müziğin ses seviyesi (/muzik ses 0.18)
+EFEKT = _al("EFEKT", "1")                # whoosh / pop / damga efektleri (/efekt ac|kapat)
 FFMPEG = _al("FFMPEG_YOLU", "ffmpeg") or "ffmpeg"
 
 CALISMA = KOK / "calisma"

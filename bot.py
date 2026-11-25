@@ -1,6 +1,7 @@
 """Telegram botu: ekran görüntülerini alır, videoyu üretir ve sana geri gönderir."""
 import asyncio
 import json
+import re
 import logging
 import os
 import shutil
@@ -11,6 +12,7 @@ import zipfile
 import requests
 from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import InvalidToken, NetworkError, TimedOut
@@ -20,9 +22,10 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, Con
 import ayarlar as A
 
 import arastirma
+import miksaj
 import okunus
 import urun_avi
-from analiz import ROLLER, SENARYO_SURUMU, AnalizHatasi, analiz_et, anthropic_dogrula
+from analiz import ROLLER, SENARYO_SURUMU, AnalizHatasi, analiz_et, anthropic_dogrula, sayim_metni
 from demo import demo_uret
 from ayarlar import (CALISMA, CIKTI, GELEN, KOK, TELEGRAM_PROXY, TELEGRAM_TOKEN, eksik_ayarlar,
                      maskele, no_kaydet, sonraki_no)
@@ -68,7 +71,9 @@ YARDIM = (
     "/anthropic ANAHTAR – Anthropic anahtarını kaydeder\n"
     "/kanal AD – videolardaki kanal adını değiştirir\n"
     "/link ac | kapat – 'link profilde' yazısını açar/kapatır (link ekleyince aç)\n"
-    "/hiz 1.25 – konuşma hızını ayarlar (1 = sesin kendi hızı, 1.2-1.35 arası Shorts için iyi)\n"
+    "/hiz 1.1 – konuşma hızı (1 = sesin kendi hızı; 1.15 üstü sonradan hızlandırılır, robotik duyulabilir)\n"
+    "/muzik – videolara eklenen müzikler; müzik eklemek için bota mp3 gönder\n"
+    "/efekt ac | kapat – geçiş, pop ve damga seslerini açar/kapatır\n"
     "/tema – videonun görünümünü seçtirir (canlı renk, açık stüdyo, sarı)\n\n"
     "Bakım:\n"
     "/guncelle – GitHub'dan son sürümü alıp kendini günceller\n"
@@ -139,6 +144,7 @@ def ayar_ozeti():
         f"Kanal adı: {A.KANAL_ADI}",
         f"Konuşma hızı: {hiz_carpani():.2f} (/hiz)",
         f"Görünüm: {TEMALAR.get(A.VIDEO_TEMA, A.VIDEO_TEMA)} (/tema)",
+        f"Müzik: {len(miksaj.muzik_listesi())} parça (/muzik), efektler {'açık' if miksaj.efektler_acik() else 'kapalı'}",
     ]
     if not A.ELEVENLABS_API_KEY:
         satirlar.append("\nSıradaki adım: /elevenlabs ANAHTAR yaz (ElevenLabs → Developers → API Keys).")
@@ -296,7 +302,8 @@ async def hiz_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         A.kaydet("SES_HIZI", f"{deger:.2f}")
     await update.message.reply_text(
         f"Konuşma hızı: {hiz_carpani():.2f}\n"
-        "1 = ses klonunun kendi hızı. Shorts için 1.2-1.35 arası iyi; 1.4 üstü yapay duyulabilir.\n"
+        "1 = ses klonunun kendi hızı. 1.0-1.15 arası doğal kalır (ElevenLabs'in kendi ayarı); "
+        "üstü sonradan hızlandırılır ve robotik duyulabilir. Videoyu kısaltmak için metin zaten kısa tutuluyor.\n"
         "Son videoyu bu hızla yeniden yapmak için: /tekrar NO")
 
 
@@ -324,6 +331,76 @@ async def tema_secildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ad in TEMALAR:
         A.kaydet("VIDEO_TEMA", ad)
         await sorgu.edit_message_text(f"Görünüm: {TEMALAR[ad]}. Mevcut videoyu bununla yapmak için: /tekrar NO")
+
+
+async def muzik_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gönderilen müzik dosyasını kaydeder; sonraki videolarda alçak seste kullanılır."""
+    if not yetkili(update):
+        return
+    mesaj = update.message
+    kaynak = mesaj.audio or mesaj.document
+    if kaynak is None:
+        return
+    ad = (getattr(kaynak, "file_name", None) or getattr(kaynak, "title", None) or f"muzik_{mesaj.message_id}")
+    uzanti = Path(ad).suffix.lower()
+    if uzanti not in miksaj.MUZIK_UZANTILARI:
+        uzanti = ".mp3"
+    if (kaynak.file_size or 0) > 20 * 1024 * 1024:
+        await mesaj.reply_text("Dosya 20 MB'tan büyük; Telegram botları bunu indiremiyor. Daha kısa bir parça gönder.")
+        return
+    temiz = re.sub(r"[^\w\-]+", "_", Path(ad).stem, flags=re.UNICODE).strip("_")[:40] or "muzik"
+    miksaj.MUZIK_KLASORU.mkdir(parents=True, exist_ok=True)
+    yol = miksaj.MUZIK_KLASORU / f"{temiz}{uzanti}"
+    dosya = await kaynak.get_file()
+    await dosya.download_to_drive(yol)
+    sayi = len(miksaj.muzik_listesi())
+    await mesaj.reply_text(
+        f"Müzik kaydedildi: {yol.name} (toplam {sayi} parça). Videolarda sırayla, konuşmanın altında alçak seste çalar.\n"
+        "Bu parçanın lisansının YouTube ve TikTok'ta kullanıma izin verdiğinden emin ol.\n"
+        "Listelemek ya da silmek için: /muzik")
+
+
+async def muzik_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/muzik: liste; /muzik sil N; /muzik ac|kapat; /muzik ses 0.12"""
+    if not yetkili(update):
+        return
+    args = [a.lower() for a in context.args]
+    liste = miksaj.muzik_listesi()
+    if args[:1] == ["sil"] and len(args) > 1 and args[1].isdigit() and 1 <= int(args[1]) <= len(liste):
+        liste[int(args[1]) - 1].unlink(missing_ok=True)
+        liste = miksaj.muzik_listesi()
+    elif args[:1] and args[0] in ("ac", "aç"):
+        A.kaydet("MUZIK", "1")
+    elif args[:1] and args[0] in ("kapat", "kapali", "kapalı"):
+        A.kaydet("MUZIK", "0")
+    elif args[:1] == ["ses"] and len(args) > 1:
+        try:
+            deger = float(args[1].replace(",", "."))
+        except ValueError:
+            deger = -1
+        if 0.02 <= deger <= 0.5:
+            A.kaydet("MUZIK_SES", f"{deger:.2f}")
+        else:
+            await update.message.reply_text("0.02 ile 0.5 arasında bir sayı yaz. Örnek: /muzik ses 0.15")
+            return
+    durum_ = "açık" if str(A.MUZIK) not in ("0", "kapali", "kapalı") else "kapalı"
+    satirlar = [f"Müzik: {durum_}, ses seviyesi {miksaj.muzik_sesi():.2f}"]
+    satirlar += [f"{i}. {p.name}" for i, p in enumerate(liste, 1)] or ["Kayıtlı müzik yok. Bota bir mp3 gönder."]
+    satirlar.append("\n/muzik sil N · /muzik ac | kapat · /muzik ses 0.18 (konuşma sırasında müzik ayrıca kısılır)")
+    await update.message.reply_text("\n".join(satirlar))
+
+
+async def efekt_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not yetkili(update):
+        return
+    secim = context.args[0].lower() if context.args else ""
+    if secim in ("ac", "aç"):
+        A.kaydet("EFEKT", "1")
+    elif secim in ("kapat", "kapali", "kapalı"):
+        A.kaydet("EFEKT", "0")
+    await update.message.reply_text(
+        f"Ses efektleri: {'açık' if miksaj.efektler_acik() else 'kapalı'} (geçişte whoosh, sayılarda pop, hükümde damga).\n"
+        "Değiştirmek için: /efekt ac | kapat")
 
 
 async def kayit_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -616,6 +693,8 @@ def paylasim_metni(veri, no):
     ]
     if veri.get("satici"):
         parcalar.append(f"SATICI: {veri['satici']}\nLinki koyarken bu satıcının ürününü seçtiğinden emin ol.")
+    if veri.get("sayim"):
+        parcalar.append("SAYIM (kodla sayıldı, kontrol için):\n" + sayim_metni(veri["sayim"]))
     if veri.get("uyarilar"):
         parcalar.append("⚠️ DİKKAT:\n" + "\n".join("• " + u for u in veri["uyarilar"]))
     parcalar.append(KONTROL)
@@ -867,6 +946,9 @@ def main():
     uygulama.add_handler(CommandHandler("tekrar", tekrar_komutu))
     uygulama.add_handler(CommandHandler("link", link_komutu))
     uygulama.add_handler(CommandHandler("hiz", hiz_komutu))
+    uygulama.add_handler(CommandHandler("muzik", muzik_komutu))
+    uygulama.add_handler(CommandHandler("efekt", efekt_komutu))
+    uygulama.add_handler(MessageHandler(filters.AUDIO | filters.Document.Category("audio/"), muzik_al))
     uygulama.add_handler(CommandHandler("tema", tema_komutu))
     uygulama.add_handler(CallbackQueryHandler(tema_secildi, pattern=r"^tema:"))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))

@@ -1,12 +1,15 @@
 """Analiz, ses ve ekran görüntülerinden dikey (1080x1920) Shorts videosu kurgular."""
 import colorsys
 import math
+import re
 import subprocess
+from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from analiz import ROLLER
 import ayarlar as A
+import miksaj
 import okunus
 from ayarlar import FFMPEG, font_bul
 
@@ -219,7 +222,8 @@ def urun_tonu(resim):
     return (math.atan2(y, x) / (2 * math.pi)) % 1.0
 
 
-TEMALAR = {"canli": "Canlı renk", "acik": "Açık stüdyo", "sari": "Sarı", "koyu": "Koyu (eski)"}
+TEMALAR = {"canli": "Pembe-mor (kanal rengi)", "urun": "Ürünün rengine göre", "acik": "Açık stüdyo",
+           "sari": "Sarı", "koyu": "Koyu (eski)"}
 
 
 def tema_paleti(ad, ton=None):
@@ -249,7 +253,7 @@ def tema_paleti(ad, ton=None):
             iz=(52, 54, 60), cip=(0, 0, 0), cip_kenar=None, cip_metin=BEYAZ,
             yildiz=SARI, vurgu=SARI, yesil=YESIL, kirmizi=KIRMIZI,
             dikkat=SARI, damga_ic=(0, 0, 0, 150), golge=0.45)
-    ust, alt = _canli_renkler(ton)
+    ust, alt = _canli_renkler(ton) if ad == "urun" else CANLI_GECISLER[0][1:]
     koyu = tuple(int(v * 0.55) for v in alt)
     return dict(
         ust=ust, alt=alt, hale=(255, 255, 255), hale_guc=150,
@@ -470,10 +474,17 @@ class Kurgu:
                 urun = urun.resize((int(urun.width * z), int(urun.height * z)), Image.BILINEAR)
                 golge = golge.resize((int(golge.width * z), int(golge.height * z)), Image.BILINEAR)
             dy = int(9 * math.sin(2 * math.pi * t / 3.2))
+            aci = 1.6 * math.sin(2 * math.pi * t / 4.4)  # hafif sallanma
+            if abs(aci) > 0.05:
+                genis = urun.rotate(aci, resample=Image.BICUBIC, expand=True)
+                y_fark = (genis.height - urun.height) // 2
+                urun = genis
+            else:
+                y_fark = 0
             x = PANEL[0] + (pw - urun.width) // 2
             y = PANEL[1] + (self.urun_alani - urun.height) // 2 + dy
             pay = (golge.width - urun.width) // 2
-            resim.paste(golge, (x - pay, y - pay + 16 - dy), golge)
+            resim.paste(golge, (x - pay, y - pay + 16 - dy + y_fark), golge)
             resim.paste(urun, (x, y), urun)
             resim.paste(self.ad_seridi, (serit_x, serit_y), self.ad_seridi)
             return
@@ -493,10 +504,30 @@ class Kurgu:
             return yedek
         bas = self.sahne_baslari[sahne]
         son = self.sahne_baslari[sahne + 1] if sahne + 1 < len(self.sahne_baslari) else 1e9
+        desen = re.compile(rf"^\W*{re.escape(aranan)}(?!\d)")
         for kelime, z_bas, _ in self.kelimeler:
-            if bas <= z_bas < son and aranan in kelime:
+            if bas <= z_bas < son and desen.search(kelime):
                 return max(0.0, z_bas - bas)
         return yedek
+
+    def efekt_anlari(self):
+        """Ses efektlerinin zamanları: geçişlerde whoosh, sayılar belirince pop, hükümde damga."""
+        b, v = self.sahne_baslari, self.veri
+        anlar = [(0.0, "whoosh")]
+        for i in range(1, len(b)):
+            if i != 4:  # hüküm sahnesinde damga sesi var
+                anlar.append((max(0.0, b[i] - 0.12), "whoosh"))
+        if len(b) > 1:
+            urun = v.get("urun_yorumu", v["okunan_yorum"])
+            for i, sayi in enumerate([str(v["okunan_yorum"]), str(urun)]):
+                anlar.append((b[1] + self._kelime_zamani(1, sayi, i * 0.9), "pop"))
+        for sahne, alan in ((2, "ovulenler"), (3, "sikayetler")):
+            if sahne < len(b):
+                for i, oge in enumerate(v[alan][:3]):
+                    anlar.append((b[sahne] + self._kelime_zamani(sahne, str(oge["sayi"]), 0.2 + i * 1.6), "pop"))
+        if len(b) > 4:
+            anlar.append((b[4] + 0.2, "damga"))
+        return anlar
 
     def _taban(self, t_genel):
         resim = self.arka.copy()
@@ -742,14 +773,22 @@ def _altyazi_ciz(resim, metin):
 def videoyu_kurgula(veri, resimler, ses_yolu, hiz, no, cikti, tema=None):
     segmentler = [(rol, veri["senaryo"][rol]) for rol in ROLLER]
     baslangiclar, toplam, altyazi, kelimeler = _zamanlar(segmentler, hiz)
+    # bölümler arasına kısa nefes payı: yapay zekâ sesi düz okumasın
+    ses_yolu, hiz = miksaj.bosluk_ekle(ses_yolu, hiz, baslangiclar)
+    baslangiclar, toplam, altyazi, kelimeler = _zamanlar(segmentler, hiz)
     kurgu = Kurgu(veri, resimler, no, kelimeler, baslangiclar, tema)
     sahneler = [getattr(kurgu, rol) for rol, _ in segmentler]
+    efekt_yolu = None
+    if miksaj.efektler_acik():
+        efekt_yolu = miksaj.efekt_izi(kurgu.efekt_anlari(), toplam, Path(ses_yolu).with_name("efekt.wav"))
+    girdiler, filtre = miksaj.ses_girdileri(ses_yolu, efekt_yolu, miksaj.muzik_sec(no), toplam)
 
-    komut = [FFMPEG, "-y", "-loglevel", "error",
-             "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{G}x{Y}", "-r", str(FPS), "-i", "-",
-             "-i", str(ses_yolu),
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
-             "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", str(cikti)]
+    komut = ([FFMPEG, "-y", "-loglevel", "error",
+              "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{G}x{Y}", "-r", str(FPS), "-i", "-"]
+             + girdiler
+             + ["-filter_complex", filtre, "-map", "0:v", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "160k", "-t", f"{toplam:.2f}", "-movflags", "+faststart", str(cikti)])
     islem = subprocess.Popen(komut, stdin=subprocess.PIPE)
     kare_sayisi = int(toplam * FPS)
     sahne, ay = 0, 0
@@ -770,4 +809,7 @@ def videoyu_kurgula(veri, resimler, ses_yolu, hiz, no, cikti, tema=None):
         islem.wait()
     if islem.returncode != 0:
         raise RuntimeError("ffmpeg videoyu oluşturamadı. ffmpeg kurulu mu?")
+    for gecici in (ses_yolu, efekt_yolu):
+        if gecici:
+            Path(gecici).unlink(missing_ok=True)
     return cikti

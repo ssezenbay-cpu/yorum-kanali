@@ -9,13 +9,14 @@ from datetime import date
 import anthropic
 
 import ayarlar as A
-from analiz import SEMA, AnalizHatasi, _json_cikar, _resim_parcasi, dogrula
+from analiz import (OKUMA_KURALLARI, OKUMA_SEMA, AnalizHatasi, _json_cikar, _resim_parcasi, sayim_yap,
+                    senaryo_yaz)
 from urun_avi import _son_metin, _tum_metin
 
 log = logging.getLogger("arastirma")
 
-SISTEM = """Sen "{kanal}" adlı Türkçe bir YouTube Shorts ve TikTok kanalının yorum analistisin.
-Görevin: verilen ürünün alıcı yorumlarını internette bulup okumak, saymak, özetlemek ve 30 saniyelik bir video senaryosu yazmak.
+SISTEM = """Sen "{kanal}" adlı Türkçe bir YouTube Shorts ve TikTok kanalının yorum okuyucususun.
+Görevin: verilen ürünün alıcı yorumlarını internette bulup okumak ve her yorumu tek tek listelemek. Sayımı program yapacak.
 
 Nerede ara (Türkiye):
 - Hepsiburada ürün sayfası ve değerlendirmeleri (fiyat, puan ve toplam değerlendirme sayısını buradan al)
@@ -25,39 +26,33 @@ Nerede ara (Türkiye):
 Trendyol ve Amazon otomatik okumaya kapalı; denersen ve açılmazsa zaman kaybetme, diğer kaynaklara geç.
 Açılmayan bir sayfayı başka yollarla (önbellek, kopya site) okumaya çalışma.
 
-Kesin kurallar:
-1. Hiçbir bilgi uydurma. Sadece gerçekten açıp okuduğun sayfalardaki yorumları say. Fiyat, puan veya toplam yorum sayısı bulunamazsa boş bırak ve "uyarilar"a yaz.
-2. Aynı modele odaklan. Markanın başka modelleriyle ilgili yorumları sayma; model özelinde yeterli yorum yoksa bunu "uyarilar"a yaz.
-3. "okunan_yorum" = tüm kaynaklarda metnini okuduğun yorum, şikâyet ve entry sayısı. "urun_yorumu" = bunlardan ürünün kendisini anlatanlar (kargo, satıcı ilgisi, teşekkür gibi bilgi vermeyenler hariç; kırık/eksik/taklit gelmesi dahil). Övgü ve şikâyet sayıları urun_yorumu'nu geçemez.
-4. Şikâyet siteleri doğası gereği olumsuzdur. Hükmü yalnızca şikâyet sayısına dayandırma; pazaryeri puanı ve yorumlarıyla dengele. Senaryoda rakamın hangi kaynaktan geldiğini söyle (ör. "Hepsiburada'da okuduğum 20 yorumun 7'si", "şikâyet sitelerinde en çok tekrar eden konu").
-5. Ürünü sen kullanmadın: "denedim", "kullandım", "test ettim" gibi ifadeler yasak.
-6. Yorum yazanların adlarını kullanma, cümlelerini birebir alıntılama; kendi cümlelerinle özetle.
-   "Taklit", "orijinal değil" gibi iddiaları alıcıların görüşü olarak aktar. Senaryoda ve ekranda satıcı adı verme, satıcıyı suçlama. Bu tür şikâyetler çoksa hükümde "resmi ya da yetkili mağazadan al" uyarısı ver.
-7. Sağlık, tedavi veya güvenlik iddiası yapma.
-8. Hüküm: şikâyetler ürünün temel işlevini bozuyorsa ve pazaryeri yorumlarında da sık geçiyorsa "ALINMAZ"; övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL".
-9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 45-60 kelime (20-28 saniye). Fiyatı ve puanı sesli okuma; ekranda etiket olarak görünür. Bağlam bölümü tek kısa cümle: kaç yorum okunduğu ve hangi sitelerden; sonuna "Hüküm sonda." ekle.
-   Dürüst oran: azınlıktaki bir bulguya "çoğu", "herkes" deme; sayıyı söyle. Ürünü anlatan yorum 30'dan azsa hükmü temkinli kur.
-   Kapanış: "Sıradaki ürün ne olsun? Yorumlara yaz." gibi tek cümle ve "Yorum dosyası #N".
-   Açılış (acilis ve ekran_acilis) okuduklarındaki EN ŞAŞIRTICI somut bulgudur ve bir rakam içerir. Ürünün kendisiyle ilgili olsun (dayanıklılık, performans, kullanım); ürünü hiç görmemiş biri de anlamalı, açıklamasız teknik terim yok. Hükmü açılışta söyleme; hüküm sona kalsın.
-   Övgü bölümü bağlamdaki sayıyı tekrar etmez; doğrudan "12 kişi ..." diye başlar.
-   Övülenler ürünün kendi özelliklerinden seçilir; "orijinal çıktı", "hızlı geldi" övgü sayılmaz. Aynı konu hem övgüde hem şikâyette olmasın.
-   "urun_gorseli" ve "urun_fotograflari" alanları için: kullanıcı görüntü gönderdiyse ürün fotoğrafının yerini ve tamamı ürün fotoğrafı olan görüntülerin numaralarını yaz; göndermediyse null ve [].
-10. Araştırma bitince yalnızca istenen JSON'u döndür, başka hiçbir şey yazma."""
+Aynı modele odaklan: markanın başka modelleriyle ilgili yorumları listeleme; model özelinde yeterli yorum yoksa "uyarilar"a yaz.
+Yalnızca gerçekten açıp okuduğun sayfalardaki yorumları listele. Her yorumun "kaynak" alanına sitenin adını yaz.
+
+""" + OKUMA_KURALLARI + """
+6. "urun_gorseli" ve "urun_fotograflari": kullanıcı görüntü gönderdiyse ürün fotoğrafının yerini ve tamamı ürün fotoğrafı
+   olan görüntülerin numaralarını yaz (yakın çekimler hariç); göndermediyse null ve []. Görüntülerdeki yorumların
+   "kaynak" alanı "ekran görüntüsü", "g" alanı görüntü numarası; internetten okuduklarında "g" null.
+7. Araştırma bitince yalnızca istenen JSON'u döndür, başka hiçbir şey yazma."""
 
 ISTEK = """Ürün: {urun}
-Bugün {tarih}. Bu video "Yorum dosyası #{no}" olacak.
+Bugün {tarih}.
 {gorsel_notu}
 Önce bu ürünün yorumlarını yukarıdaki kaynaklarda ara ve oku (en az 25 ürün yorumu hedefle).
-Sonra şu yapıda JSON döndür. Ek olarak "kaynaklar" alanına okuduğun kaynakları yaz:
-"kaynaklar": [{{"ad": "Hepsiburada", "okunan": 0, "adres": "sayfa adresi"}}]
+Sonra her yorumu tek tek listeleyip şu yapıda JSON döndür. Ek olarak "kaynaklar" alanına açıp okuduğun sayfaları yaz:
+"kaynaklar": [{{"ad": "Hepsiburada", "adres": "sayfa adresi"}}]
 
 """
 
-GORSEL_NOTU = ("Kullanıcı ayrıca {n} ekran görüntüsü gönderdi (ilk görüntü ürün sayfası olabilir). Onlardaki yorumları da "
-               "oku ve say; kaynak adı olarak \"ekran görüntüsü\" yaz. Ürün adı görüntüyle uyuşmuyorsa görüntüdekini esas al.")
+GORSEL_NOTU = ("Kullanıcı ayrıca {n} görüntü gönderdi (ürün fotoğrafları ya da ürün sayfası ve yorum ekran görüntüleri "
+               "olabilir). Onlardaki yorumları da listele. Ürün adı görüntüyle uyuşmuyorsa görüntüdekini esas al.")
 
-DUZELT = ("Bulduklarına göre analizi şimdi yalnızca istenen JSON nesnesi olarak ver. Yeni arama yapma, "
-          "metinleri kısa tut, JSON dışında hiçbir şey yazma.")
+KAYNAK_NOTU = ("Kaynaklar (okunan yorum): {kaynaklar}. Bağlam cümlesinde yorumların hangi sitelerden okunduğunu kısaca söyle. "
+               "Şikâyet siteleri doğası gereği olumsuzdur: hükmü yalnızca şikâyet sayısına dayandırma, "
+               "pazaryeri yorumlarıyla dengele.")
+
+DUZELT = ("Bulduklarına göre şimdi yalnızca istenen JSON nesnesini ver. Yeni arama yapma, "
+          "JSON dışında hiçbir şey yazma.")
 
 
 def _araclar(fetch=True):
@@ -95,32 +90,43 @@ def _calistir(istemci, sistem, icerik, araclar):
 
 
 def arastir(urun, no, gorseller=()):
-    """Ürünü web'de araştırır; video için doğrulanmış analiz sözlüğü döndürür."""
+    """Ürünü web'de araştırır: yorumlar listelenir, kod sayar, metin bu sayılarla yazılır."""
     if not A.ANTHROPIC_API_KEY:
         raise AnalizHatasi("Anthropic anahtarı yok. /anthropic ANAHTAR ile gir.")
     gorseller = list(gorseller)[:20]
-    istek = ISTEK.format(urun=urun, tarih=date.today().strftime("%d.%m.%Y"), no=no,
+    istek = ISTEK.format(urun=urun, tarih=date.today().strftime("%d.%m.%Y"),
                          gorsel_notu=GORSEL_NOTU.format(n=len(gorseller)) if gorseller else "")
     icerik = [_resim_parcasi(g) for g in gorseller]
-    icerik.append({"type": "text", "text": istek + SEMA.format(no=no)})
+    icerik.append({"type": "text", "text": istek + OKUMA_SEMA.replace(
+        "{kaynak_alani}", '"kaynak": "site adı", ').format()})
     sistem = SISTEM.replace("{kanal}", A.KANAL_ADI)
     istemci = anthropic.Anthropic(api_key=A.ANTHROPIC_API_KEY)
     try:
-        ham = _calistir(istemci, sistem, icerik, _araclar(fetch=True))
+        okuma = _calistir(istemci, sistem, icerik, _araclar(fetch=True))
     except anthropic.BadRequestError as hata:
         if "web_fetch" not in str(hata):
             raise
         log.warning("Sayfa okuma aracı kullanılamadı, yalnızca aramayla devam: %s", hata)
-        ham = _calistir(istemci, sistem, icerik, _araclar(fetch=False))
-    kaynaklar = [k for k in (ham.get("kaynaklar") or []) if isinstance(k, dict) and k.get("ad")]
+        okuma = _calistir(istemci, sistem, icerik, _araclar(fetch=False))
+    if "hata" in okuma:
+        raise AnalizHatasi(okuma["hata"])
+    sayim = sayim_yap(okuma)
+    adresler = {}
+    for k in okuma.get("kaynaklar") or []:
+        if isinstance(k, dict) and k.get("ad"):
+            adresler.setdefault(str(k["ad"]).strip(), k.get("adres") or "")
+    kaynaklar = [{"ad": ad, "okunan": sayi, "adres": adresler.get(ad, "")}
+                 for ad, sayi in sorted(sayim["kaynak_sayisi"].items(), key=lambda x: -x[1])]
+    not_ = KAYNAK_NOTU.format(kaynaklar=", ".join(f"{k['ad']} {k['okunan']}" for k in kaynaklar) or "belirtilmedi")
     try:
-        veri = dogrula(ham, no)
+        veri = senaryo_yaz(istemci, okuma, no, kaynak_notu=not_)
     except AnalizHatasi as hata:
         if "ürünü anlatıyor" not in str(hata):
             raise
         raise AnalizHatasi(
             f"İnternette bu model için yeterli ürün yorumu bulunamadı ({hata.args[0].split(' (')[0]}). "
             "Ürün adını biraz daha genel yaz ya da birkaç yorum ekran görüntüsü gönderip tekrar dene.") from hata
+    veri["okuma"] = {"konular": okuma.get("konular"), "yorumlar": okuma.get("yorumlar")}
     veri["kaynaklar"] = kaynaklar
     veri["arama"] = urun
     return veri
