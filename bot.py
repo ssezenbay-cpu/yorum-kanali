@@ -20,6 +20,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, Con
 import ayarlar as A
 
 import arastirma
+import okunus
 import urun_avi
 from analiz import ROLLER, AnalizHatasi, analiz_et, anthropic_dogrula
 from demo import demo_uret
@@ -56,7 +57,9 @@ YARDIM = (
     "/oneri – internette araştırıp 5 ürün adayı önerir (her pazartesi 10:00'da kendiliğinden gelir)\n"
     "/sonuc NO İZLENME TIKLAMA [KAZANÇ] – videonun sonucunu kaydeder (ör. /sonuc 3 12000 40 350)\n"
     "/rapor – hangi ürün grubunun daha iyi gittiğini gösterir\n"
-    "/demo – API kullanmadan sessiz örnek video yapar\n\n"
+    "/demo – API kullanmadan sessiz örnek video yapar\n"
+    "/okunus KELİME = OKUNUŞ – yanlış okunan kelimeyi düzeltir (ör. /okunus Dreame = Drim)\n"
+    "/tekrar NO – videonun sesini ve kurgusunu analizi tekrarlamadan yeniden yapar\n\n"
     "Ayarlar:\n"
     "/ayarlar – hangi ayarların tamam olduğunu gösterir\n"
     "/elevenlabs ANAHTAR – ElevenLabs anahtarını kaydeder, sesini bulur\n"
@@ -569,8 +572,9 @@ async def _uret(context: ContextTypes.DEFAULT_TYPE, chat_id, ilk_mesaj, analiz_c
                 f"2/3 Seslendiriyorum… ({veri['okunan_yorum']} yorum okundu, {veri['urun_yorumu']} tanesi ürünü "
                 f"anlatıyor; hüküm: {veri['hukum']})")
             metin = " ".join(veri["senaryo"][r] for r in ROLLER)
+            konusma = okunus.konusma_metni([veri["senaryo"][r] for r in ROLLER])
             ses_yolu = klasor / "ses.mp3"
-            hiz = await asyncio.to_thread(seslendir, metin, ses_yolu)
+            hiz = await asyncio.to_thread(seslendir, konusma, ses_yolu)
             await durum_mesaji.edit_text("3/3 Videoyu kurguluyorum… (1-2 dakika)")
             kullanilan = list(gorseller) or [kapak_uret(veri["urun_adi"], klasor / "kapak.png")]
             cikti = CIKTI / f"yorum_dosyasi_{no:03d}.mp4"
@@ -588,6 +592,7 @@ async def _uret(context: ContextTypes.DEFAULT_TYPE, chat_id, ilk_mesaj, analiz_c
         for kaynak in gorseller:
             shutil.copy2(kaynak, klasor / kaynak.name)
         (klasor / "senaryo.txt").write_text(metin, encoding="utf-8")
+        (klasor / "okunus.txt").write_text(konusma, encoding="utf-8")
         (klasor / "analiz.json").write_text(json.dumps(veri, ensure_ascii=False, indent=1), encoding="utf-8")
         await durum_mesaji.edit_text(f"Hazır: Yorum dosyası #{no}")
         with open(cikti, "rb") as dosya:
@@ -595,6 +600,82 @@ async def _uret(context: ContextTypes.DEFAULT_TYPE, chat_id, ilk_mesaj, analiz_c
                                          read_timeout=180, write_timeout=180)
         await context.bot.send_message(chat_id, paylasim_metni(veri, no))
         return True
+
+
+async def okunus_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/okunus KELİME = OKUNUŞ  |  /okunus sil KELİME  |  /okunus"""
+    if not yetkili(update):
+        return
+    metin = " ".join(context.args).strip()
+    if not metin:
+        kayitli = okunus.kullanici_sozlugu()
+        liste = "\n".join(f"• {k} → {v}" for k, v in sorted(kayitli.items())) or "(henüz eklemedin)"
+        await update.message.reply_text(
+            "Yanlış okunan bir kelimeyi düzeltmek için:\n/okunus Stanley = Stenli\n"
+            "Silmek için: /okunus sil Stanley\n\n"
+            "Sayılar (1.839 TL, 4,6, 46'sı), %, QR gibi kısaltmalar zaten Türkçe okunuyor.\n"
+            "Düzelttikten sonra videonun sesini yenilemek için: /tekrar DOSYA_NO\n\n"
+            f"Senin eklediklerin:\n{liste}")
+        return
+    if metin.lower().startswith("sil "):
+        kelime = metin[4:].strip()
+        okunus.sozluge_ekle(kelime, "")
+        await update.message.reply_text(f"Silindi: {kelime}")
+        return
+    if "=" not in metin:
+        await update.message.reply_text("Biçim: /okunus KELİME = OKUNUŞ   (ör. /okunus Dreame = Drim)")
+        return
+    kelime, okunan = (x.strip() for x in metin.split("=", 1))
+    if not kelime or not okunan or " " in kelime:
+        await update.message.reply_text("Tek bir kelime ve okunuşunu yaz: /okunus Dreame = Drim")
+        return
+    okunus.sozluge_ekle(kelime, okunan)
+    ornek = okunus.konusma_metni([f"{kelime} ürünü"])
+    await update.message.reply_text(f"Kaydedildi: {kelime} → {okunan}\nÖrnek okunuş: {ornek}")
+
+
+async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/tekrar NO: analizi yeniden yapmadan sesi ve videoyu baştan üretir (okunuş düzeltmesinden sonra)."""
+    if not yetkili(update):
+        return
+    try:
+        no = int(context.args[0].lstrip("#"))
+    except (IndexError, ValueError):
+        await update.message.reply_text("Kullanım: /tekrar DOSYA_NO   (ör. /tekrar 1)")
+        return
+    klasor = CALISMA / f"dosya_{no:03d}"
+    analiz_yolu = klasor / "analiz.json"
+    if not analiz_yolu.exists():
+        await update.message.reply_text(f"#{no} için kayıtlı analiz yok; bu video eski sürümle yapılmış olabilir.")
+        return
+    veri = json.loads(analiz_yolu.read_text(encoding="utf-8"))
+    gorseller = sorted(p for p in klasor.iterdir()
+                       if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and p.name != "kapak.png")
+    kilit = context.application.bot_data.setdefault("uretim_kilidi", asyncio.Lock())
+    if kilit.locked():
+        await update.message.reply_text("Şu an bir video hazırlanıyor; o bitince tekrar dene.")
+        return
+    async with kilit:
+        durum_mesaji = await update.message.reply_text(f"#{no} yeniden seslendiriliyor…")
+        try:
+            konusma = okunus.konusma_metni([veri["senaryo"][r] for r in ROLLER])
+            ses_yolu = klasor / "ses.mp3"
+            hiz = await asyncio.to_thread(seslendir, konusma, ses_yolu)
+            await durum_mesaji.edit_text(f"#{no} videosu kurgulanıyor… (1-2 dakika)")
+            if not gorseller:
+                gorseller = [kapak_uret(veri["urun_adi"], klasor / "kapak.png")]
+            cikti = CIKTI / f"yorum_dosyasi_{no:03d}.mp4"
+            await asyncio.to_thread(videoyu_kurgula, veri, gorseller, ses_yolu, hiz, no, cikti)
+        except Exception as hata:  # noqa: BLE001
+            log.exception("tekrar hatası")
+            await durum_mesaji.edit_text(f"Olmadı: {hata}")
+            return
+        (klasor / "okunus.txt").write_text(konusma, encoding="utf-8")
+        await durum_mesaji.edit_text(f"Hazır: Yorum dosyası #{no} (yeni ses)")
+        with open(cikti, "rb") as dosya:
+            await update.message.reply_video(dosya, caption=f"Yorum dosyası #{no}", supports_streaming=True,
+                                             read_timeout=180, write_timeout=180)
+        await update.message.reply_text("Seslendirilen metin:\n" + konusma)
 
 
 async def hazirla(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -694,6 +775,8 @@ def main():
     uygulama.add_handler(CommandHandler("yeniden", yeniden_komutu))
     uygulama.add_handler(CommandHandler("guncelle", guncelle_komutu))
     uygulama.add_handler(CommandHandler("arastir", arastir_komutu))
+    uygulama.add_handler(CommandHandler("okunus", okunus_komutu))
+    uygulama.add_handler(CommandHandler("tekrar", tekrar_komutu))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("zip"), guncelleme_al))
     uygulama.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, resim_al))

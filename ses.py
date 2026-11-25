@@ -14,19 +14,29 @@ class SesHatasi(Exception):
     pass
 
 
-def seslendir(metin, hedef):
-    yanit = requests.post(
+def _istek(metin, normalizasyon_kapali=True):
+    govde = {
+        "text": metin,
+        "model_id": A.ELEVENLABS_MODEL,
+        "voice_settings": {"stability": 0.45, "similarity_boost": 0.85,
+                           "style": 0.15, "use_speaker_boost": True},
+    }
+    if normalizasyon_kapali:
+        # Sayıları biz Türkçe yazıya çeviriyoruz; ElevenLabs'in kendi (İngilizce) çevirisi karışmasın
+        govde["apply_text_normalization"] = "off"
+    return requests.post(
         URL.format(ses=A.ELEVENLABS_VOICE_ID),
         params={"output_format": "mp3_44100_128"},
         headers={"xi-api-key": A.ELEVENLABS_API_KEY, "Content-Type": "application/json"},
-        json={
-            "text": metin,
-            "model_id": A.ELEVENLABS_MODEL,
-            "voice_settings": {"stability": 0.45, "similarity_boost": 0.85,
-                               "style": 0.15, "use_speaker_boost": True},
-        },
+        json=govde,
         timeout=180,
     )
+
+
+def seslendir(metin, hedef):
+    yanit = _istek(metin)
+    if yanit.status_code in (400, 422) and "normalization" in yanit.text:
+        yanit = _istek(metin, normalizasyon_kapali=False)
     if yanit.status_code == 401:
         raise SesHatasi("ElevenLabs anahtarı geçersiz. Telegram'da /elevenlabs komutuyla yenisini gir.")
     if yanit.status_code != 200:

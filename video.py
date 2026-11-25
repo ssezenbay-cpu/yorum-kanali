@@ -1,11 +1,11 @@
 """Analiz, ses ve ekran görüntülerinden dikey (1080x1920) Shorts videosu kurgular."""
-import re
 import subprocess
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from analiz import ROLLER
 import ayarlar as A
+import okunus
 from ayarlar import FFMPEG, font_bul
 
 G, Y, FPS = 1080, 1920, 30
@@ -238,22 +238,19 @@ class Kurgu:
         return resim
 
 
-def _zamanlar(tam_metin, segmentler, hiz):
+def _zamanlar(segmentler, hiz):
+    """Altyazı ekrandaki (rakamlı) metinle, zamanlama ise seslendirilen (okunuş) metinle yapılır."""
+    konusma, kelime_haritasi, seg_bas = okunus.esle([m for _, m in segmentler])
     bas, bit = hiz["baslangic"], hiz["bitis"]
     n = len(bas)
-    oran = n / max(1, len(tam_metin))
+    oran = n / max(1, len(konusma))
 
     def zaman(indeks, liste):
         return liste[max(0, min(n - 1, int(indeks * oran)))]
 
-    sahne_baslangic, konum = [], 0
-    for _, metin in segmentler:
-        sahne_baslangic.append(zaman(konum, bas))
-        konum += len(metin) + 1
+    sahne_baslangic = [zaman(k, bas) for k in seg_bas]
     toplam = bit[-1] + 0.6
-
-    kelimeler = [(m.group(0), zaman(m.start(), bas), zaman(m.end() - 1, bit))
-                 for m in re.finditer(r"\S+", tam_metin)]
+    kelimeler = [(kelime, zaman(b, bas), zaman(max(b, e - 1), bit)) for kelime, b, e in kelime_haritasi]
     parcalar, grup = [], []
     for kelime in kelimeler:
         grup.append(kelime)
@@ -278,8 +275,7 @@ def _altyazi_ciz(resim, metin):
 
 def videoyu_kurgula(veri, resimler, ses_yolu, hiz, no, cikti):
     segmentler = [(rol, veri["senaryo"][rol]) for rol in ROLLER]
-    tam_metin = " ".join(m for _, m in segmentler)
-    baslangiclar, toplam, altyazi = _zamanlar(tam_metin, segmentler, hiz)
+    baslangiclar, toplam, altyazi = _zamanlar(segmentler, hiz)
     kurgu = Kurgu(veri, resimler, no)
     sahneler = [getattr(kurgu, rol) for rol, _ in segmentler]
 

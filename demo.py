@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw
 
 from analiz import dogrula
 from ayarlar import CALISMA, CIKTI, font_bul
+import okunus
 from ses import sahte_seslendir
 from video import F, videoyu_kurgula
 
@@ -54,8 +55,8 @@ def demo_uret():
         "aciklama": "Demo.",
         "etiketler": ["demo"],
     }, 0)
-    tam_metin = " ".join(veri["senaryo"][r] for r in
-                         ["acilis", "baglam", "ovgu", "sikayet", "hukum", "kapanis"])
+    tam_metin = okunus.konusma_metni([veri["senaryo"][r] for r in
+                                      ["acilis", "baglam", "ovgu", "sikayet", "hukum", "kapanis"]])
     ses = klasor / "ses.mp3"
     hiz = sahte_seslendir(tam_metin, ses)
     cikti = CIKTI / "demo.mp4"
