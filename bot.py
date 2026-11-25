@@ -65,7 +65,8 @@ YARDIM = (
     "/elevenlabs ANAHTAR – ElevenLabs anahtarını kaydeder, sesini bulur\n"
     "/ses – kullanılacak ses klonunu seçtirir\n"
     "/anthropic ANAHTAR – Anthropic anahtarını kaydeder\n"
-    "/kanal AD – videolardaki kanal adını değiştirir\n\n"
+    "/kanal AD – videolardaki kanal adını değiştirir\n"
+    "/link ac | kapat – 'link profilde' yazısını açar/kapatır (link ekleyince aç)\n\n"
     "Bakım:\n"
     "/guncelle – GitHub'dan son sürümü alıp kendini günceller\n"
     "/kayit – botun son kayıtlarını gösterir\n"
@@ -258,6 +259,21 @@ async def kanal_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     A.kaydet("KANAL_ADI", " ".join(context.args))
     await update.message.reply_text(f"Kanal adı: {A.KANAL_ADI}")
+
+
+async def link_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/link ac | /link kapat: videolarda ve açıklamada 'link profilde' yazısını açar/kapatır."""
+    if not yetkili(update):
+        return
+    secim = (context.args[0].lower() if context.args else "")
+    if secim in ("ac", "aç", "acik", "açık"):
+        A.kaydet("LINK_PROFILDE", "1")
+    elif secim in ("kapat", "kapali", "kapalı"):
+        A.kaydet("LINK_PROFILDE", "")
+    durum = "açık" if A.LINK_PROFILDE else "kapalı"
+    await update.message.reply_text(
+        f"'Link profilde' yazısı: {durum}.\n"
+        "Satış ortaklığı linkini profiline ekleyince /link ac yaz; o zamana kadar kapalı kalsın.")
 
 
 async def kayit_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -544,8 +560,9 @@ def paylasim_metni(veri, no):
     parcalar = [
         f"BAŞLIK:\n{veri['baslik']}",
         f"AÇIKLAMA:\n{veri.get('aciklama', '').strip()}\n\n{kaynak}"
-        f"Ürün linki profilde: Yorum dosyası #{no}. Profildeki link satış ortaklığı linkidir. #işbirliği\n"
-        f"{etiketler}",
+        + (f"Ürün linki profilde: Yorum dosyası #{no}. Profildeki link satış ortaklığı linkidir. #işbirliği\n"
+           if A.LINK_PROFILDE else f"Yorum dosyası #{no}. Sıradaki ürünü yorumlara yaz.\n")
+        + f"{etiketler}",
     ]
     if veri.get("satici"):
         parcalar.append(f"SATICI: {veri['satici']}\nLinki koyarken bu satıcının ürününü seçtiğinden emin ol.")
@@ -790,6 +807,7 @@ def main():
     uygulama.add_handler(CommandHandler("arastir", arastir_komutu))
     uygulama.add_handler(CommandHandler("okunus", okunus_komutu))
     uygulama.add_handler(CommandHandler("tekrar", tekrar_komutu))
+    uygulama.add_handler(CommandHandler("link", link_komutu))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("zip"), guncelleme_al))
     uygulama.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, resim_al))

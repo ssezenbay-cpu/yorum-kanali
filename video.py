@@ -1,7 +1,9 @@
 """Analiz, ses ve ekran görüntülerinden dikey (1080x1920) Shorts videosu kurgular."""
 import subprocess
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+import math
+
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from analiz import ROLLER
 import ayarlar as A
@@ -98,7 +100,8 @@ def kapak_uret(urun_adi, hedef, alt_yazi="İnternetteki yorumlar okundu"):
 
 
 # --- yerleşim (1080x1920) ---------------------------------------------------
-PANEL = (70, 240, G - 70, 820)          # ürün paneli: üstte, sürekli görünür
+PANEL = (70, 230, G - 70, 770)          # ürün paneli: üstte, sürekli görünür
+ETIKET_Y = 786                          # fiyat / puan etiketleri
 ICERIK_Y, ICERIK_ALT = 860, 1240        # bilgi alanı; altyazı 1290'da başlar
 KARE_ARALIK, GECIS = 2.4, 0.35          # ürün panelinde kadraj değişimi sıklığı ve geçiş süresi
 KADRAJLAR = [(1.00, 0.50, 0.50), (1.16, 0.50, 0.42), (1.08, 0.44, 0.56), (1.20, 0.56, 0.48)]
@@ -115,6 +118,85 @@ def urun_gorseli_kirp(resim, kutu=None):
     if boy / en > 1.5:  # telefon ekran görüntüsü: ürün fotoğrafı genelde üst yarıda
         return resim.crop((0, int(boy * 0.08), en, int(boy * 0.55)))
     return resim
+
+
+def _zemin(resim):
+    """Kenar piksellerinden zemin rengini ve kenarların ne kadarının bu renkte olduğunu bulur."""
+    en, boy = resim.size
+    adim_x, adim_y = max(1, en // 40), max(1, boy // 40)
+    noktalar = [(x, 0) for x in range(0, en, adim_x)] + [(x, boy - 1) for x in range(0, en, adim_x)]
+    noktalar += [(0, y) for y in range(0, boy, adim_y)] + [(en - 1, y) for y in range(0, boy, adim_y)]
+    renkler = [resim.getpixel(n) for n in noktalar]
+    ort = tuple(sum(r[i] for r in renkler) // len(renkler) for i in range(3))
+    yakin = sum(1 for r in renkler if max(abs(r[i] - ort[i]) for i in range(3)) < 28) / len(renkler)
+    return ort, yakin
+
+
+def _ana_parcalar(maske):
+    """Maskede yalnızca büyük parçaları (ürünü) bırakır; yazı, logo, rozet gibi küçük parçaları atar."""
+    kucuk = maske.copy()
+    kucuk.thumbnail((220, 220), Image.NEAREST)
+    kucuk = kucuk.point(lambda v: 255 if v > 127 else 0)
+    en, boy = kucuk.size
+    piksel = kucuk.load()
+    etiket = 1
+    for y in range(boy):
+        for x in range(en):
+            if piksel[x, y] == 255 and etiket < 250:
+                ImageDraw.floodfill(kucuk, (x, y), etiket)
+                etiket += 1
+    hist = kucuk.histogram()
+    alanlar = {i: hist[i] for i in range(1, etiket)}
+    if not alanlar:
+        return maske
+    en_buyuk = max(alanlar.values())
+    tut = {i for i, a in alanlar.items() if a >= 0.2 * en_buyuk}
+    secili = kucuk.point(lambda v: 255 if v in tut else 0).filter(ImageFilter.MaxFilter(5))
+    secili = secili.resize(maske.size, Image.NEAREST)
+    return ImageChops.multiply(maske, secili)
+
+
+def urunu_ayikla(resim):
+    """Açık ve düz zeminli ürün fotoğrafında ürünü zeminden ayırır (RGBA). Uygun değilse None."""
+    ort, yakin = _zemin(resim)
+    if yakin < 0.85 or min(ort) < 195:
+        return None
+    kucuk = resim.copy()
+    kucuk.thumbnail((480, 480))
+    fark = ImageChops.difference(kucuk, Image.new("RGB", kucuk.size, ort)).convert("L")
+    ikili = fark.point(lambda v: 255 if v > 22 else 0)
+    en, boy = ikili.size
+    tohumlar = ([(x, 0) for x in range(0, en, 5)] + [(x, boy - 1) for x in range(0, en, 5)]
+                + [(0, y) for y in range(0, boy, 5)] + [(en - 1, y) for y in range(0, boy, 5)])
+    for xy in tohumlar:
+        if ikili.getpixel(xy) == 0:
+            ImageDraw.floodfill(ikili, xy, 128)
+    maske = _ana_parcalar(ikili.point(lambda v: 0 if v == 128 else 255))
+    kutu = maske.getbbox()
+    if not kutu:
+        return None
+    oran = (kutu[2] - kutu[0]) * (kutu[3] - kutu[1]) / (en * boy)
+    if oran < 0.04 or oran > 0.97:
+        return None
+    maske = maske.filter(ImageFilter.MinFilter(3)).resize(resim.size, Image.BILINEAR)
+    maske = maske.filter(ImageFilter.GaussianBlur(1.2))
+    rgba = resim.convert("RGBA")
+    rgba.putalpha(maske)
+    return rgba.crop(maske.getbbox())
+
+
+def _isik(en, boy):
+    """Ürünün arkasındaki yumuşak ışık halkası."""
+    katman = Image.new("L", (en, boy), 0)
+    c = ImageDraw.Draw(katman)
+    for i in range(12, 0, -1):
+        r = int(min(en, boy) * 0.48 * i / 12)
+        c.ellipse((en // 2 - int(r * 1.25), boy // 2 - r, en // 2 + int(r * 1.25), boy // 2 + r),
+                  fill=int(70 * (1 - i / 13)))
+    katman = katman.filter(ImageFilter.GaussianBlur(30))
+    isik = Image.new("RGBA", (en, boy), (255, 236, 200, 0))
+    isik.putalpha(katman)
+    return isik
 
 
 def _sigdir(resim, en, boy):
@@ -144,23 +226,68 @@ class Kurgu:
         self.urun = urun_gorseli_kirp(kaynak, secim.get("kutu") if secim else None)
         pw, ph = PANEL[2] - PANEL[0], PANEL[3] - PANEL[1]
         self.panel_boyut = (pw, ph)
-        self.panel_kaynak = _sigdir(self.urun, int(pw * 1.25), int(ph * 1.25))
-        arka = kapla(self.urun.resize((54, 96)), G, Y).filter(ImageFilter.GaussianBlur(60))
+        self.kesik = urunu_ayikla(self.urun)
+        if self.kesik is not None:
+            # Zeminden ayrılmış ürün: koyu zeminde, gölgeli ve hafifçe süzülerek
+            self.urun_alani = ph - 70  # alttaki ürün adı şeridinin üstü
+            olcek = min(pw * 0.86 / self.kesik.width, self.urun_alani * 0.93 / self.kesik.height)
+            boyut = (max(1, int(self.kesik.width * olcek * 1.08)), max(1, int(self.kesik.height * olcek * 1.08)))
+            self.kesik = self.kesik.resize(boyut, Image.LANCZOS)
+            if olcek > 1.3:
+                self.kesik = self.kesik.filter(ImageFilter.UnsharpMask(radius=2, percent=70, threshold=2))
+            alfa = self.kesik.getchannel("A")
+            golge = Image.new("RGBA", self.kesik.size, (0, 0, 0, 0))
+            golge.putalpha(alfa.point(lambda v: int(v * 0.45)).filter(ImageFilter.GaussianBlur(26)))
+            self.golge = golge
+            self.isik = _isik(pw, ph)
+            ortalama = self.kesik.convert("RGB").resize((1, 1), Image.LANCZOS).getpixel((0, 0))
+            arka = Image.new("RGB", (G, Y), ortalama)
+        else:
+            # Zemini dolu fotoğraf: paneli tamamen kaplar (beyaz boşluk yok), yavaş kadraj hareketi
+            self.panel_kaynak = kapla(self.urun, int(pw * 1.25), int(ph * 1.25), (0.5, 0.45))
+            arka = kapla(self.urun.resize((54, 96)), G, Y)
+        arka = arka.filter(ImageFilter.GaussianBlur(60))
         self.arka = Image.blend(arka, Image.new("RGB", (G, Y), KOYU), 0.84)
         c = ImageDraw.Draw(self.arka)
-        c.text((KENAR, 175), f"{A.KANAL_ADI}  ·  Yorum dosyası #{self.no}", font=F(36), fill=GRI)
+        c.text((KENAR, 172), f"{A.KANAL_ADI}  ·  Yorum dosyası #{self.no}", font=F(34), fill=GRI)
         self.maske = yuvarlak_maske(pw, ph, 32)
         self.ad_seridi = self._ad_seridi(pw)
+        self._etiketleri_ciz(self.arka)
 
     # --- ortak parçalar ------------------------------------------------------
+    def _etiketleri_ciz(self, resim):
+        v = self.veri
+        parcalar = []
+        if v.get("fiyat"):
+            parcalar.append(str(v["fiyat"]))
+        if v.get("puan"):
+            parcalar.append(f"★ {v['puan']}")
+        if v.get("toplam_yorum"):
+            parcalar.append(f"{v['toplam_yorum']} değerlendirme")
+        if not parcalar:
+            return
+        c = ImageDraw.Draw(resim)
+        font = F(32)
+        while parcalar:
+            genislikler = [c.textlength(p, font=font) + 44 for p in parcalar]
+            toplam = sum(genislikler) + 14 * (len(parcalar) - 1)
+            if toplam <= G - 2 * KENAR + 40:
+                break
+            parcalar.pop()
+        x = (G - toplam) / 2
+        for metin, en in zip(parcalar, genislikler):
+            c.rounded_rectangle((x, ETIKET_Y, x + en, ETIKET_Y + 52), 26, fill=(0, 0, 0))
+            c.text((x + 22, ETIKET_Y + 8), metin, font=font, fill=SARI if metin.startswith("★") else BEYAZ)
+            x += en + 14
+
     def _ad_seridi(self, en):
-        serit = Image.new("RGBA", (en, 76), (0, 0, 0, 165))
+        serit = Image.new("RGBA", (en, 70), (0, 0, 0, 150))
         c = ImageDraw.Draw(serit)
         ad = self.veri["urun_adi"]
-        font = F(44)
+        font = F(40)
         while c.textlength(ad, font=font) > en - 60 and len(ad) > 10:
             ad = ad.rstrip("…")[:-1].rstrip() + "…"
-        c.text(((en - c.textlength(ad, font=font)) / 2, 14), ad, font=font, fill=BEYAZ)
+        c.text(((en - c.textlength(ad, font=font)) / 2, 13), ad, font=font, fill=BEYAZ)
         return serit
 
     def _kadraj(self, t):
@@ -174,10 +301,33 @@ class Kurgu:
             z, cx, cy = simdiki
         return z * (1 + 0.012 * yerel), cx, cy
 
+    def _vurus(self, t):
+        """Sahne geçişlerinde ürünün kısa bir 'zıplama' büyümesi."""
+        for bas in self.sahne_baslari[1:]:
+            if 0 <= t - bas < 0.35:
+                return 1 + 0.05 * math.sin(math.pi * (t - bas) / 0.35)
+        return 1.0
+
     def _panel(self, resim, t):
         pw, ph = self.panel_boyut
+        if self.kesik is not None:
+            resim.paste(self.isik, (PANEL[0], PANEL[1]), self.isik)
+            z = (1 + 0.04 * min(1.0, t / 30)) * self._vurus(t)
+            urun, golge = self.kesik, self.golge
+            if abs(z - 1) > 0.003:
+                boyut = (int(urun.width * z), int(urun.height * z))
+                urun, golge = urun.resize(boyut, Image.BILINEAR), golge.resize(boyut, Image.BILINEAR)
+            dy = int(9 * math.sin(2 * math.pi * t / 3.2))
+            x = PANEL[0] + (pw - urun.width) // 2
+            y = PANEL[1] + (self.urun_alani - urun.height) // 2 + dy
+            resim.paste(golge, (x, y + 30 - dy), golge)
+            resim.paste(urun, (x, y), urun)
+            serit_y = PANEL[3] - self.ad_seridi.height
+            resim.paste(self.ad_seridi, (PANEL[0], serit_y), self.ad_seridi)
+            return
         kaynak = self.panel_kaynak
         z, cx, cy = self._kadraj(t)
+        z *= self._vurus(t)
         ken, kboy = min(kaynak.width, kaynak.width / z), min(kaynak.height, kaynak.height / z)
         sol = min(max(0, cx * kaynak.width - ken / 2), kaynak.width - ken)
         ust = min(max(0, cy * kaynak.height - kboy / 2), kaynak.height - kboy)
@@ -230,28 +380,22 @@ class Kurgu:
         c = ImageDraw.Draw(resim)
         v = self.veri
         urun = v.get("urun_yorumu", v["okunan_yorum"])
-        satirlar = []
-        if v.get("fiyat"):
-            satirlar.append(("Fiyat", v["fiyat"], str(v["fiyat"]).split()[0]))
-        if v.get("puan"):
-            satirlar.append(("Puan", f"{v['puan']} / 5", str(v["puan"])))
-        if v.get("toplam_yorum"):
-            satirlar.append(("Toplam değerlendirme", str(v["toplam_yorum"]), str(v["toplam_yorum"])))
-        satirlar.append(("Ürünü anlatan yorum", f"{urun} / {v['okunan_yorum']}", str(v["okunan_yorum"])))
+        bloklar = [(str(v["okunan_yorum"]), "yorum okundu", BEYAZ), (str(urun), "ürünü anlatıyor", SARI)]
+        en = (SAG - KENAR - 30) // 2
         dx = self._kaydir(t)
-        for i, (etiket, deger, aranan) in enumerate(satirlar):
-            gir = self._kelime_zamani(1, aranan, i * 0.7)
+        for i, (sayi, etiket, renk) in enumerate(bloklar):
+            gir = self._kelime_zamani(1, sayi, i * 0.9)
             ilerleme = yumusak((t - gir) / 0.3)
             if ilerleme <= 0:
                 continue
-            y = ICERIK_Y + i * 94
-            vurgu = (t - gir) < 0.6
-            c.rounded_rectangle((KENAR + dx, y, SAG + dx, y + 82), 20,
-                                fill=(52, 56, 66) if vurgu else (30, 32, 38))
-            c.text((KENAR + 34 + dx, y + 22), etiket, font=F(40, False), fill=GRI)
-            font = F(int(50 + 8 * (1 - ilerleme)))
-            en = c.textlength(deger, font=font)
-            c.text((SAG - 34 - en + dx, y + 14), deger, font=font, fill=BEYAZ)
+            x = KENAR + i * (en + 30) + dx
+            y = ICERIK_Y + 20 + int((1 - ilerleme) * 30)
+            c.rounded_rectangle((x, y, x + en, y + 250), 28, fill=(30, 32, 38))
+            font = F(int(118 + 30 * (1 - min(1.0, (t - gir) / 0.35))))
+            genislik = c.textlength(sayi, font=font)
+            c.text((x + (en - genislik) / 2, y + 30), sayi, font=font, fill=renk)
+            genislik = c.textlength(etiket, font=F(38, False))
+            c.text((x + (en - genislik) / 2, y + 180), etiket, font=F(38, False), fill=GRI)
         return resim
 
     def _cubuklar(self, t, tg, sahne, baslik, renk, ogeler):
@@ -264,8 +408,11 @@ class Kurgu:
             gir = self._kelime_zamani(sahne, str(oge["sayi"]), 0.2 + i * 1.6)
             ilerleme = yumusak((t - gir) / 0.6)
             y = ICERIK_Y + 90 + i * 150
-            konu = sar(c, oge["konu"], F(48), SAG - KENAR - 200)[:1]
-            c.text((KENAR + dx, y), konu[0] if konu else "", font=F(48),
+            boyut = 48
+            while boyut > 32 and c.textlength(oge["konu"], font=F(boyut)) > SAG - KENAR - 200:
+                boyut -= 4
+            konu = sar(c, oge["konu"], F(boyut), SAG - KENAR - 200)[:1]
+            c.text((KENAR + dx, y + (48 - boyut) // 2), konu[0] if konu else "", font=F(boyut),
                    fill=BEYAZ if ilerleme > 0 else (120, 120, 120))
             etiket = f"{oge['sayi']} / {toplam}"
             if ilerleme > 0:
@@ -312,9 +459,13 @@ class Kurgu:
     def kapanis(self, t, sure, tg):
         resim = self._taban(tg)
         c = ImageDraw.Draw(resim)
-        ortala(c, ["Link profilde"], F(92), ICERIK_Y + 20, BEYAZ, 110)
-        ortala(c, [f"Yorum dosyası #{self.no}"], F(60), ICERIK_Y + 150, SARI, 74)
-        ortala(c, ["Profildeki link satış ortaklığı linkidir."], F(34, False), ICERIK_Y + 250, GRI, 44)
+        ortala(c, ["Sıradaki ürün ne olsun?"], F(70), ICERIK_Y + 20, BEYAZ, 84)
+        if t > 0.25:
+            ortala(c, ["Yorumlara yaz"], F(66), ICERIK_Y + 115, SARI, 80)
+        alt = [f"Yorum dosyası #{self.no}"]
+        if A.LINK_PROFILDE:
+            alt.append("Link profilde · satış ortaklığı linki")
+        ortala(c, alt, F(36, False), ICERIK_Y + 220, GRI, 48)
         return resim
 
 

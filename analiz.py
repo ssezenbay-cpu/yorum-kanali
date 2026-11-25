@@ -37,10 +37,13 @@ Kesin kurallar:
    "Taklit", "orijinal değil", "sahte" gibi iddiaları kesin bilgi gibi verme: "X alıcı ürünün orijinal olmadığını düşünüyor" gibi alıcıların görüşü olarak aktar. Senaryoda ve ekranda satıcı adı verme, satıcıyı suçlama. Bu tür şikâyetler çoksa hükümde ve "kime_uygun"da "resmi ya da yetkili mağazadan al" uyarısı ver.
 7. Sağlık, tedavi veya güvenlik iddiası yapma.
 8. Hüküm: şikâyetler ürünün temel işlevini bozuyorsa veya ürünü anlatan yorumların yarısına yakınındaysa "ALINMAZ"; övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL".
-9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 60-80 kelime.
+9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 45-60 kelime (20-28 saniye).
+   Fiyatı, puanı ve toplam değerlendirme sayısını sesli okuma; bunlar ekranda küçük etiket olarak görünür. Bağlam bölümü tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı.
+   Dürüst oran: azınlıktaki bir bulguya "çoğu", "herkes", "neredeyse hepsi" deme; sayıyı söyle ("46 yorumdan 6'sı"). Ürünü anlatan yorum 30'dan azsa hükmü temkinli kur ve "okuduğum yorumlara göre" de.
+   Kapanış: "Sıradaki ürün ne olsun? Yorumlara yaz." gibi izleyiciyi yorum yazmaya çağıran tek cümle ve "Yorum dosyası #N".
    Açılış (acilis ve ekran_acilis) yorumlardaki EN ŞAŞIRTICI somut bulgudur ve bir rakam içerir, ör. "1.839 liralık termosta 6 kişi garanti kodunu bulamadı". Hükmü açılışta söyleme; hüküm sona kalsın ki izleyici merak etsin.
    Övülenler ürünün kendi özelliklerinden seçilir (performans, malzeme, tasarım, kullanım kolaylığı). "Orijinal çıktı", "hızlı geldi", "iyi paketlenmiş" övgü sayılmaz. Şikâyetlerde taklit gelme, garanti ya da fatura sorunu gibi satın alma riskleri sayılabilir. Aynı konu hem övgüde hem şikâyette olmasın; birbiriyle çelişen maddeler seçme.
-   "urun_gorseli": ürünün kendi büyük fotoğrafının hangi görüntüde olduğu (1'den başlayarak) ve o fotoğrafın sınırları [sol, üst, sağ, alt], görüntünün genişliğine ve yüksekliğine oranla 0 ile 1 arası. Alıcıların yorumlara eklediği fotoğrafları seçme. Ürün fotoğrafı yoksa null.
+   "urun_gorseli": ürünün kendi büyük fotoğrafının hangi görüntüde olduğu (1'den başlayarak) ve o fotoğrafın sınırları [sol, üst, sağ, alt], görüntünün genişliğine ve yüksekliğine oranla 0 ile 1 arası. Kutu yalnızca ürün fotoğrafını kapsasın: sayfa okları, kalp/paylaş simgeleri, rozetler, "kargo bedava" etiketleri, sayfa göstergesi noktaları ve yazılar dışarıda kalsın. Alıcıların yorumlara eklediği fotoğrafları seçme. Ürün fotoğrafı yoksa null.
 10. Senaryonun bölümleri sırayla okunacak; her bölüm bir öncekinin devamı gibi akmalı.
 
 Yalnızca geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma.
@@ -64,11 +67,11 @@ SEMA = """{{
   "urun_gorseli": {{"goruntu": 1, "kutu": [0.0, 0.0, 1.0, 1.0]}},
   "senaryo": {{
     "acilis": "...",
-    "baglam": "fiyat, puan ve kaç yorum okunduğu",
+    "baglam": "tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı",
     "ovgu": "en çok övülen iki şey, sayılarıyla",
     "sikayet": "en çok şikâyet edilen iki şey, sayılarıyla; 'ama asıl sorun' gibi merak cümlesiyle",
     "hukum": "hüküm ve kime uygun",
-    "kapanis": "Link profilde. Yorum dosyası #{no}."
+    "kapanis": "Sıradaki ürün ne olsun? Yorumlara yaz. Yorum dosyası #{no}."
   }},
   "baslik": "en fazla 60 karakter, merak uyandıran",
   "aciklama": "2-3 cümle",
@@ -182,8 +185,8 @@ def dogrula(veri, no):
 
     tam_metin = " ".join(senaryo[r] for r in ROLLER)
     kelime = len(tam_metin.split())
-    if kelime > 95:
-        uyarilar.append(f"Senaryo uzun ({kelime} kelime); video 35 saniyeyi geçebilir.")
+    if kelime > 72:
+        uyarilar.append(f"Senaryo uzun ({kelime} kelime); video 30 saniyeyi geçebilir.")
     kucuk = tam_metin.lower()
     for ifade in YASAK_IFADELER:
         if ifade in kucuk:
