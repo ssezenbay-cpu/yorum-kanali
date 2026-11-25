@@ -13,7 +13,7 @@ import ayarlar as A
 from veriler import GRUPLAR, fiyat_sayi
 
 ROLLER = ["acilis", "baglam", "ovgu", "sikayet", "hukum", "kapanis"]
-SENARYO_SURUMU = 7  # kurallar değişince artar; /tekrar eski metni görünce analizi yeniler
+SENARYO_SURUMU = 8  # kurallar değişince artar; /tekrar eski metni görünce analizi yeniler
 HUKUMLER = {"ALINIR", "ALINMAZ", "DİKKATLİ AL"}
 log = logging.getLogger("analiz")
 YASAK_IFADELER = ["denedim", "kullandım", "test ettim", "aldım ve", "bende de"]
@@ -69,6 +69,8 @@ OKUMA_KURALLARI = """Kesin kurallar:
    "tavsiye ederim", "güzel ürün" gibi bilgi vermeyen yorumlar false.
 4. "konular": önce yorumlarda geçen ürün konularını tanımla: kod, kısa ad (en fazla 4 kelime), yön (arti ya da eksi).
    Aynı şeyi anlatan ifadeleri tek konuda birleştir ("boyası soyuldu" ve "boyası çizildi" → "Dış boya soyulma").
+   Aynı parçanın sorunlarını da tek konuda topla ("kulp kırıldı" ve "kulp vidası uymuyor" → "Kulp sorunu"),
+   böylece aynı kişi iki kez sayılmaz.
    "Orijinal çıktı", "hızlı geldi", "iyi paketlenmiş" konu değildir. Taklit gelme, garanti ya da fatura sorunu eksi konu olabilir.
    Her yorumun "konular" alanına o yorumda gerçekten geçen konuların kodlarını yaz; bir yorumda hem artı hem eksi olabilir.
 5. "anahtar": yorumun ilk 4 kelimesi (yalnızca tekrarları ayıklamak için kullanılır, videoda kullanılmaz).
@@ -120,7 +122,8 @@ Kesin kurallar:
    Satıcı adı verme, satıcıyı suçlama. Bu tür şikâyetler çoksa hükümde "resmi ya da yetkili mağazadan al" de.
 4. Sağlık, tedavi veya güvenlik iddiası yok.
 5. Hüküm: şikâyetler ürünün temel işlevini bozuyorsa ya da ürünü anlatan yorumların yarısına yakınındaysa "ALINMAZ";
-   övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL". Ürünü anlatan yorum 30'dan azsa hükmü temkinli kur.
+   övgüler açıkça baskınsa "ALINIR"; karışıksa "DİKKATLİ AL". Ürünü anlatan yorum 100'den azsa hüküm bölümünde
+   bunu kısaca söyle ("Yorum az, sonuç kesin değil.").
 6. Dürüst oran: azınlıktaki bir bulguya "çoğu", "herkes", "neredeyse hepsi" deme; sayıyı söyle.
 7. Konuşur gibi yaz. Toplam 40-50 kelime. Her cümle kısa, en fazla 9 kelime; yan cümle yok.
    Fiyatı ve toplam değerlendirme sayısını söyleme; ekranda yazıyor. Puanı yalnızca açılıştaki çelişki için kullanabilirsin.
@@ -133,10 +136,12 @@ Kesin kurallar:
    baglam: tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı, ardından "Hüküm sonda."
    ovgu: bağlamdaki sayıyı tekrar etmeden doğrudan "12 kişi ..." diye başlar; en çok övülen iki konu.
    sikayet: kısa bir soruyla başlar ("Peki sorun ne?" gibi), sonra en çok şikâyet edilen iki ya da üç konu, sayılarıyla.
+     ovulenler ve sikayetler listesine yalnızca metinde sayısıyla söylediğin konuları koy (ekrandaki her satır seslendirilmeli).
    hukum: "Hüküm: ..." ve kime uygun olduğu, kısa. "kime_uygun" somut bir kullanım ya da kişi tarifi olsun
      ("küçük evde hızlı temizlik için", "uzun süre çalışacaksan değil"); "riski göze alanlar" gibi boş ifade yok.
    kapanis: "Sıradaki dosyayı sen seç. Yorumlara yaz. Yorum dosyası #N."
-9. ekran_acilis: ilk karedeki büyük yazı, en fazla 7 kelime, oranı göster ve merakı korusun: "7/46 alıcı aynı şeyi yazmış" gibi.
+9. ekran_acilis: ilk karedeki büyük yazı, en fazla 7 kelime, sesteki gibi sade: "9 alıcı aynı şeyi yazmış".
+   Bölü işaretiyle oran yazma; oran ekranda ayrıca küçük etiket olarak gösteriliyor.
 10. ovulenler ve sikayetler yalnızca verilen listeden seçilir; konu adı ve sayı listedekiyle aynı. Aynı konu iki tarafta olmasın.
     Yalnızca 1 yorumda geçen konuyu seçme (listede 2 ve üstü varsa).
 
@@ -319,6 +324,12 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi=""):
     veri["urun_yorumu"] = sayim["urun_yorumu"]
     veri["ovulenler"] = _maddeleri_duzelt(yazi.get("ovulenler"), arti)
     veri["sikayetler"] = _maddeleri_duzelt(yazi.get("sikayetler"), eksi)
+    senaryo_ = yazi.get("senaryo") if isinstance(yazi.get("senaryo"), dict) else {}
+    for alan, rol in (("ovulenler", "ovgu"), ("sikayetler", "sikayet")):
+        soylenen = set(re.findall(r"\b\d+\b", str(senaryo_.get(rol, ""))))
+        uyan = [o for o in veri[alan] if str(o["sayi"]) in soylenen]
+        if uyan:  # ekranda yalnızca seslendirilen maddeler kalsın
+            veri[alan] = uyan
     # ekranda gösterilecek kısa, isimsiz alıntılar: seçilen ilk övgü ve ilk şikâyet konusundan
     veri["alintilar"] = {}
     for alan, rol, liste in (("ovulenler", "ovgu", arti), ("sikayetler", "sikayet", eksi)):
@@ -333,6 +344,8 @@ def senaryo_yaz(istemci, okuma, no, kaynak_notu="", kaynak_etiketi=""):
     if not veri["senaryo"]:
         raise AnalizHatasi("Metin yazılamadı. Tekrar dene.")
     veri = dogrula(veri, no)
+    if sayim["urun_yorumu"] < 100 and "kesin" not in veri["senaryo"]["hukum"].lower():
+        veri["senaryo"]["hukum"] = veri["senaryo"]["hukum"].rstrip(" .") + ". Yorum az, sonuç kesin değil."
     izinli = {sayim["okunan_yorum"], sayim["urun_yorumu"], no} | {k["sayi"] for k in sayim["konular"]}
     metin = " ".join(veri["senaryo"].values())
     urun_sayilari = set(re.findall(r"\d+", f"{veri.get('urun_adi', '')} {puan}"))
@@ -450,15 +463,27 @@ def dogrula(veri, no):
 EN_FAZLA_GORUNTU = 45  # ekran kaydından gelen kareler dahil
 
 
-def analiz_et(resimler, no):
-    """İki adım: 1) görüntülerdeki yorumlar tek tek listelenir, 2) kod sayar ve metin bu sayılarla yazılır."""
+def analiz_et(resimler, no, urun_adi=""):
+    """İki adım: 1) görüntülerdeki yorumlar tek tek listelenir, 2) kod sayar ve metin bu sayılarla yazılır.
+    urun_adi: kullanıcının /hazirla ile yazdığı marka ve model (görüntülerde ad yoksa)."""
     istemci = anthropic.Anthropic(api_key=A.ANTHROPIC_API_KEY)
     resimler = list(resimler)
     icerik = [_resim_parcasi(r) for r in resimler[:EN_FAZLA_GORUNTU]]
-    icerik.append({"type": "text", "text": OKUMA_ISTEGI.format(n=len(icerik))})
+    istek = OKUMA_ISTEGI.format(n=len(icerik))
+    if urun_adi:
+        istek = f"Ürün (kullanıcı yazdı): {urun_adi}\n" + istek
+    icerik.append({"type": "text", "text": istek})
     okuma = _iste(istemci, OKUMA_SISTEM.replace("{kanal}", A.KANAL_ADI), icerik, "Okuma")
+    if urun_adi:
+        okuma["urun_adi"] = urun_adi
     veri = senaryo_yaz(istemci, okuma, no)
     veri["okuma"] = {"konular": okuma.get("konular"), "yorumlar": okuma.get("yorumlar")}
+    if not okuma.get("urun_gorseli") and not okuma.get("urun_fotograflari"):
+        veri["uyarilar"].append("Ürün fotoğrafı yoktu; videoda ürün yerine adı yazıyor. Ürün sayfasından fotoğraf "
+                                f"kaydedip bota gönder, sonra /tekrar {no} yaz.")
+    if not urun_adi and not (okuma.get("fiyat") or okuma.get("puan")):
+        veri["uyarilar"].append("Ürün sayfası görüntüsü yoktu: ad, fiyat ve puan eksik olabilir. Adı netleştirmek için "
+                                "bir dahakinde /hazirla MARKA MODEL yaz ya da ürün sayfasının ekran görüntüsünü ekle.")
     if len(resimler) > EN_FAZLA_GORUNTU:
         veri["uyarilar"].append(f"{len(resimler)} görüntü gönderildi; ilk {EN_FAZLA_GORUNTU} tanesi okundu.")
     return veri

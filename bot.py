@@ -56,7 +56,8 @@ YARDIM = (
     "Ekran görüntüsüyle (Trendyol gibi otomatik okunamayan siteler için):\n"
     "1. Ürün sayfasından 2-3 ürün fotoğrafı kaydet (uzun bas → Fotoğrafı Kaydet; farklı açılar) ve onları gönder. "
     "Sonra yorumların ekran görüntülerini gönder. Video her bölümde başka açıyı gösterir.\n"
-    "2. /hazirla yaz. İstersen görüntüleri gönderip /arastir da yazabilirsin; ikisi birlikte okunur.\n"
+    "2. /hazirla yaz (ürün adı görüntülerde yoksa: /hazirla MARKA MODEL). İstersen /arastir da yazabilirsin.\n"
+    "Videoya sonradan ürün fotoğrafı eklemek için: fotoğrafı gönder, sonra /tekrar NO.\n"
     "Ekran kaydı da olur: yorumları 'En yeni' sıralamasıyla aç, kaydı başlat, yavaşça aşağı kaydır ve "
     "kaydı bota gönder (1 dakikada 40-60 yorum).\n\n"
     "Diğer komutlar:\n"
@@ -586,6 +587,10 @@ async def resim_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _eski_goruntu_sor(mesaj, onceki, simdi)
 
 
+MUZIK_YOK = ("Not: videoda müzik yok, çünkü bota henüz müzik gönderilmedi. Bir mp3'ü bota dosya olarak gönder; "
+             "bundan sonraki videolarda konuşmanın altında alçak seste çalar (/muzik ile yönetilir).")
+
+
 async def _eski_goruntu_sor(mesaj, onceki, simdi):
     """Uzun aradan sonra yeni görüntü/kayıt gelince eskilerin silinip silinmeyeceğini sorar."""
     if not onceki:
@@ -841,6 +846,8 @@ async def _uret(context: ContextTypes.DEFAULT_TYPE, chat_id, ilk_mesaj, analiz_c
             await context.bot.send_video(chat_id, dosya, caption=f"Yorum dosyası #{no}", supports_streaming=True,
                                          read_timeout=180, write_timeout=180)
         await context.bot.send_message(chat_id, paylasim_metni(veri, no))
+        if not miksaj.muzik_listesi():
+            await context.bot.send_message(chat_id, MUZIK_YOK)
         return True
 
 
@@ -902,6 +909,24 @@ async def tekrar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     eski_veri = json.loads(analiz_yolu.read_text(encoding="utf-8")) if analiz_yolu.exists() else {}
     arama = eski_veri.get("arama")  # /arastir ile yapılmışsa yeniden internetten okunur
+    bekleyen = resimler(update.effective_chat.id)
+    if bekleyen and klasor.exists():
+        # Sonradan gönderilen fotoğraflar bu videonun ürün fotoğrafı olur (ör. önce yalnızca yorum gönderildiyse)
+        damga_ = int(time.time())
+        eklenen = []
+        for i, p in enumerate(bekleyen):
+            hedef = klasor / f"urun_ek_{damga_}_{i:02d}{p.suffix.lower()}"
+            shutil.copy2(p, hedef)
+            eklenen.append(hedef.name)
+        shutil.rmtree(oturum(update.effective_chat.id), ignore_errors=True)
+        gorseller = sorted(p for p in klasor.iterdir()
+                           if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and p.name != "kapak.png")
+        yeni_no = [i + 1 for i, p in enumerate(gorseller) if p.name in eklenen]
+        if eski_veri:
+            eski_veri["urun_fotograflari"] = yeni_no + [n for n in eski_veri.get("urun_fotograflari") or []
+                                                        if n not in yeni_no]
+            analiz_yolu.write_text(json.dumps(eski_veri, ensure_ascii=False, indent=1), encoding="utf-8")
+        await update.message.reply_text(f"{len(eklenen)} fotoğraf #{no} için ürün fotoğrafı olarak eklendi.")
     veri = eski_veri if not tam else None
     if veri is not None and veri.get("surum", 0) < SENARYO_SURUMU:
         if gorseller or arama:
@@ -957,8 +982,9 @@ async def hazirla(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "En az 2 görüntü gönder: ürün sayfası ve yorumlar. İlk görüntü ürün sayfası olmalı.\n"
             "Görüntüsüz yol: /arastir ÜRÜN ADI")
         return
+    urun_adi = " ".join(context.args).strip()[:80]
     tamam = await _uret(context, chat_id, f"1/3 Yorumları okuyorum… ({len(liste)} görüntü)",
-                        lambda no: analiz_et(liste, no), liste,
+                        lambda no: analiz_et(liste, no, urun_adi), liste,
                         "Görüntüler duruyor. Ekleme yapıp /hazirla ile tekrar deneyebilir ya da /iptal ile silebilirsin.")
     if tamam:
         shutil.rmtree(oturum(chat_id), ignore_errors=True)

@@ -160,7 +160,7 @@ SERIT = 60                              # ürün adı şeridinin yüksekliği
 ETIKET_Y = 782                          # fiyat / puan etiketleri
 ICERIK_Y, ICERIK_ALT = 856, 1326        # bilgi alanı
 ALTYAZI_Y = 1352                        # kalın altyazı
-DIPNOT_Y = 1556                         # veri kaynağı ve tarih
+DIPNOT_Y = 1540                         # veri kaynağı ve tarih
 ADIMLAR = [(1, "Dosya"), (2, "Övgü"), (3, "Şikâyet"), (4, "Karar")]  # (sahne sırası, ad)
 KARE_ARALIK, GECIS = 2.4, 0.35          # ürün panelinde kadraj değişimi sıklığı ve geçiş süresi
 KADRAJLAR = [(1.00, 0.50, 0.50), (1.16, 0.50, 0.42), (1.08, 0.44, 0.56), (1.20, 0.56, 0.48)]
@@ -212,7 +212,7 @@ def _ana_parcalar(maske):
     tut = {i for i, a in alanlar.items() if a >= 0.2 * en_buyuk}
     secili = kucuk.point(lambda v: 255 if v in tut else 0).filter(ImageFilter.MaxFilter(5))
     secili = secili.resize(maske.size, Image.NEAREST)
-    return ImageChops.multiply(maske, secili)
+    return ImageChops.multiply(maske, secili), len(tut)
 
 
 def urunu_ayikla(resim, tam_olmali=False):
@@ -231,7 +231,9 @@ def urunu_ayikla(resim, tam_olmali=False):
     for xy in tohumlar:
         if ikili.getpixel(xy) == 0:
             ImageDraw.floodfill(ikili, xy, 128)
-    maske = _ana_parcalar(ikili.point(lambda v: 0 if v == 128 else 255))
+    maske, parca_sayisi = _ana_parcalar(ikili.point(lambda v: 0 if v == 128 else 255))
+    if parca_sayisi > 6:  # birbirinden ayrı çok sayıda benzer parça: ürün değil, yazı (ör. yorum ekranı)
+        return None
     kutu = maske.getbbox()
     if not kutu:
         return None
@@ -421,7 +423,7 @@ def _urun_adaylari(veri, resimler):
         i = no - 1
         if 0 <= i < len(resimler) and i not in kullanilan:
             try:
-                adaylar.append(ac(i))
+                adaylar.append((ac(i), True))
                 kullanilan.add(i)
             except OSError:
                 pass
@@ -431,14 +433,13 @@ def _urun_adaylari(veri, resimler):
         try:
             tam = ac(i)
             kirpik = urun_gorseli_kirp(tam, secim.get("kutu") if secim else None)
+            guvenilir = bool(secim)  # analiz ürün fotoğrafını bulduysa güvenilir; bulamadıysa yalnızca tahmin
             if min(kirpik.size) >= 220:
-                adaylar.append(kirpik)
+                adaylar.append((kirpik, guvenilir))
             elif not adaylar:  # kutu çok küçük: bulanık çıkmasın diye görüntünün tamamı
-                adaylar.append(urun_gorseli_kirp(tam))
+                adaylar.append((urun_gorseli_kirp(tam), guvenilir))
         except OSError:
             pass
-    if not adaylar:
-        adaylar.append(urun_gorseli_kirp(ac(0)))
     return adaylar
 
 
@@ -465,14 +466,22 @@ class Kurgu:
         # Ürün görseli: önce kullanıcının gönderdiği tam ürün fotoğrafları, sonra ekran görüntüsünden kırpılan.
         adaylar = _urun_adaylari(veri, resimler)
         kesikler = []
-        for aday in adaylar:
+        for aday, _ in adaylar:
             if len(kesikler) >= 4:
                 break
             kesik = urunu_ayikla(aday, tam_olmali=bool(kesikler))
             if kesik is not None:
                 kesikler.append(kesik)
         self.kesik = kesikler[0] if kesikler else None
-        self.urun = adaylar[0] if kesikler else max(adaylar, key=lambda a: min(a.size))
+        guvenilir = [a for a, g in adaylar if g]
+        # Ürün fotoğrafı yoksa (yalnızca yorum ekranları gönderildiyse) ekran görüntüsü ürün sanılmasın: ad kartı
+        self.ad_karti = self.kesik is None and not guvenilir
+        if self.kesik is not None:
+            self.urun = adaylar[0][0]
+        elif guvenilir:
+            self.urun = max(guvenilir, key=lambda a: min(a.size))
+        else:
+            self.urun = Image.new("RGB", (pw, ph), (20, 30, 54))
         tema = tema or A.VIDEO_TEMA or "lacivert"
         self.tema = tema if tema in TEMALAR else "lacivert"
         self.p = p = tema_paleti(self.tema, urun_tonu(self.kesik if self.kesik is not None else self.urun))
@@ -483,6 +492,9 @@ class Kurgu:
             # Zeminden ayrılmış ürün: renkli zeminde, gölgeli ve hafifçe süzülerek.
             # Birden fazla temiz ürün fotoğrafı varsa her sahnede başka açı gösterilir.
             self.kesikler = [self._hazirla(kesik) for kesik in kesikler]
+        elif self.ad_karti:
+            self.sigdir = True
+            self.panel_kaynak = self._ad_karti_ciz(pw, ph)
         else:
             ort, yakin = _zemin(self.urun)
             if yakin >= 0.6 and min(ort) >= 185:
@@ -498,9 +510,32 @@ class Kurgu:
             golge = golge.filter(ImageFilter.GaussianBlur(22))
             self.arka.paste(Image.new("RGB", (G, Y), (0, 0, 0)), (0, 0), golge)
         self.maske = yuvarlak_maske(pw, ph, 34)
-        self.ad_seridi = self._ad_seridi(pw)
+        self.ad_seridi = self._ad_seridi(pw) if not self.ad_karti else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
         self._isik_hazirla()
         self._dipnot_ciz(self.arka)
+
+    def _ad_karti_ciz(self, en, boy):
+        """Ürün fotoğrafı yokken panel: ürünün adı büyük harflerle, kategori üstte."""
+        p = self.p
+        kart = Image.new("RGB", (en, boy), p["kart"])
+        c = ImageDraw.Draw(kart)
+        c.rounded_rectangle((3, 3, en - 4, boy - 4), 34, outline=p["iz"], width=3)
+        ad = tr_buyuk(self.veri.get("urun_adi") or "")
+        for boyut in (84, 72, 62, 54):
+            satirlar = sar(c, ad, FD(boyut), en - 120)
+            if len(satirlar) <= 3:
+                break
+        satirlar = satirlar[:3]
+        aralik = int(boyut * 1.1)
+        y = (boy - aralik * len(satirlar)) // 2 + 20
+        kategori = tr_buyuk(self.veri.get("kategori") or "")
+        if kategori:
+            en_k = c.textlength(kategori, font=FS(30))
+            c.text(((en - en_k) / 2, y - 60), kategori, font=FS(30), fill=p["vurgu"])
+        ortala_ = [(s, c.textlength(s, font=FD(boyut))) for s in satirlar]
+        for i, (s, en_s) in enumerate(ortala_):
+            c.text(((en - en_s) / 2, y + i * aralik), s, font=FD(boyut), fill=p["metin"])
+        return kart
 
     def _hazirla(self, kesik):
         """Kesilmiş ürünü panele göre ölçekler ve gölgesini (kenarlarda kesilmesin diye paylı) hazırlar."""
@@ -553,12 +588,13 @@ class Kurgu:
             or "ekran görüntüleri"
         tarih = v.get("tarih") or datetime.now().strftime("%d.%m.%Y")
         satir1 = f"Veri: {v['okunan_yorum']} yorum ({v.get('urun_yorumu', v['okunan_yorum'])} ürünle ilgili) · {tarih}"
-        satir2 = f"Kaynak: {kaynak} · {v['urun_adi']} · ürün görseli: satıcı sayfası"
-        for i, (metin, boyut) in enumerate(((satir1, 26), (satir2, 22))):
-            font = F(boyut, False)
+        satir2 = f"Kaynak: {kaynak} · {v['urun_adi']}" + ("" if self.ad_karti else " · ürün görseli: satıcı sayfası")
+        for i, (metin, boyut) in enumerate(((satir1, 31), (satir2, 26))):
+            font = F(boyut, i == 0)
             while c.textlength(metin, font=font) > G - 2 * KENAR + 40 and len(metin) > 20:
                 metin = metin[:-2].rstrip() + "…"
-            c.text((KENAR - 30, DIPNOT_Y + i * 36), metin, font=font, fill=p["ikincil"])
+            c.text((KENAR - 30, DIPNOT_Y + i * 44), metin, font=font,
+                   fill=p["metin"] if i == 0 else p["ikincil"])
 
     def _ust_bilgi(self, resim):
         """Seri başlığı (kanal adı) ve fiyat / puan / değerlendirme etiketleri."""
@@ -785,6 +821,12 @@ class Kurgu:
             return self._kanca
         p = self.p
         metin = tr_buyuk(self.veri["ekran_acilis"]).replace("“", "'").replace("”", "'").replace('"', "'")
+        oran = re.search(r"(\d+)\s*/\s*(\d+)", metin)
+        if oran:  # "9/61 alıcı" ilk bakışta zor okunuyor: büyük yazıda "9 alıcı", oran küçük etikette
+            metin = metin.replace(oran.group(0), oran.group(1), 1)
+        sayi = oran.group(1) if oran else (re.search(r"\d+", metin).group(0) if re.search(r"\d+", metin) else None)
+        payda = self.veri.get("urun_yorumu", self.veri["okunan_yorum"])
+        self._kanca_oran = f"{sayi}/{payda} ürün yorumu" if sayi and int(sayi) <= payda else None
         olcu = ImageDraw.Draw(Image.new("L", (1, 1)))
         for boyut in (150, 132, 116, 100, 88):
             satirlar = sar(olcu, metin, FD(boyut), G - 2 * KENAR + 40)
@@ -817,6 +859,13 @@ class Kurgu:
             kanca = kanca.resize((int(kanca.width * olcek), int(kanca.height * olcek)), Image.BILINEAR)
         y = ICERIK_Y + 40 + (self._kanca.height - kanca.height) // 2
         resim.paste(kanca, ((G - kanca.width) // 2, y), kanca)
+        if self._kanca_oran and t > 0.35:
+            c = ImageDraw.Draw(resim)
+            font = F(32)
+            en = c.textlength(self._kanca_oran, font=font) + 40
+            x, yy = (G - en) / 2, ICERIK_Y + 40 + self._kanca.height + 6
+            c.rounded_rectangle((x, yy, x + en, yy + 50), 25, fill=self.p["cip"])
+            c.text((x + 20, yy + 8), self._kanca_oran, font=font, fill=self.p["vurgu"])
         return resim
 
     def baglam(self, t, sure, tg):
