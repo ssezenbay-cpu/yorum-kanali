@@ -159,8 +159,9 @@ def _ana_parcalar(maske):
     return ImageChops.multiply(maske, secili)
 
 
-def urunu_ayikla(resim):
-    """Açık ve düz zeminli ürün fotoğrafında ürünü zeminden ayırır (RGBA). Uygun değilse None."""
+def urunu_ayikla(resim, tam_olmali=False):
+    """Açık ve düz zeminli ürün fotoğrafında ürünü zeminden ayırır (RGBA). Uygun değilse None.
+    tam_olmali: ürün fotoğrafın kenarlarına dayanıyorsa (yakın çekim, kesik ürün) kullanma."""
     ort, yakin = _zemin(resim)
     if yakin < 0.85 or min(ort) < 195:
         return None
@@ -181,6 +182,10 @@ def urunu_ayikla(resim):
     oran = (kutu[2] - kutu[0]) * (kutu[3] - kutu[1]) / (en * boy)
     if oran < 0.04 or oran > 0.97:
         return None
+    if tam_olmali:
+        dayanan = sum((kutu[0] <= 2, kutu[1] <= 2, kutu[2] >= en - 2, kutu[3] >= boy - 2))
+        if dayanan >= 1:
+            return None
     maske = maske.filter(ImageFilter.MinFilter(3)).resize(resim.size, Image.BILINEAR)
     maske = maske.filter(ImageFilter.GaussianBlur(1.2))
     rgba = resim.convert("RGBA")
@@ -292,6 +297,7 @@ def _arka_plan(p):
 
 DESEN_ADIM = {"nokta": 46, "serit": 92}
 DESEN_HIZ = 14  # piksel/saniye: zemin deseni yavaşça kayar
+GOLGE_PAY = 50  # gölge bulanıklığı kenarda kesilmesin diye bırakılan pay
 
 
 def _desen(tur, renk):
@@ -344,17 +350,21 @@ class Kurgu:
         self.arka = _arka_plan(p)
         self.desen, self.desen_adim = _desen(p["desen"], p["desen_renk"]) if p["desen"] else (None, 0)
         if self.kesik is not None:
-            # Zeminden ayrılmış ürün: renkli zeminde, gölgeli ve hafifçe süzülerek
+            # Zeminden ayrılmış ürün: renkli zeminde, gölgeli ve hafifçe süzülerek.
+            # Birden fazla temiz ürün fotoğrafı varsa her sahnede başka açı gösterilir.
             self.urun_alani = ph - SERIT - 10
-            olcek = min(pw * 0.80 / self.kesik.width, self.urun_alani * 0.94 / self.kesik.height)
-            boyut = (max(1, int(self.kesik.width * olcek)), max(1, int(self.kesik.height * olcek)))
-            self.kesik = self.kesik.resize(boyut, Image.LANCZOS)
-            if olcek > 1.3:
-                self.kesik = self.kesik.filter(ImageFilter.UnsharpMask(radius=2, percent=70, threshold=2))
-            alfa = self.kesik.getchannel("A")
-            golge = Image.new("RGBA", self.kesik.size, (0, 0, 0, 0))
-            golge.putalpha(alfa.point(lambda v: int(v * p["golge"])).filter(ImageFilter.GaussianBlur(24)))
-            self.golge = golge
+            kesikler = [self.kesik]
+            for no_ in veri.get("urun_fotograflari") or []:
+                if no_ - 1 == indeks or not 0 <= no_ - 1 < len(resimler) or len(kesikler) >= 4:
+                    continue
+                try:
+                    with Image.open(resimler[no_ - 1]) as ham:
+                        ek = urunu_ayikla(ImageOps.exif_transpose(ham).convert("RGB"), tam_olmali=True)
+                except OSError:
+                    ek = None
+                if ek is not None:
+                    kesikler.append(ek)
+            self.kesikler = [self._hazirla(kesik) for kesik in kesikler]
         else:
             # Zemini dolu fotoğraf: paneli tamamen kaplar (beyaz boşluk yok), yavaş kadraj hareketi
             self.panel_kaynak = kapla(self.urun, int(pw * 1.25), int(ph * 1.25), (0.5, 0.45))
@@ -365,6 +375,25 @@ class Kurgu:
             self.arka.paste(Image.new("RGB", (G, Y), (0, 0, 0)), (0, 0), golge)
         self.maske = yuvarlak_maske(pw, ph, 34)
         self.ad_seridi = self._ad_seridi(pw)
+
+    def _hazirla(self, kesik):
+        """Kesilmiş ürünü panele göre ölçekler ve gölgesini (kenarlarda kesilmesin diye paylı) hazırlar."""
+        pw, _ = self.panel_boyut
+        olcek = min(pw * 0.80 / kesik.width, self.urun_alani * 0.94 / kesik.height)
+        boyut = (max(1, int(kesik.width * olcek)), max(1, int(kesik.height * olcek)))
+        kesik = kesik.resize(boyut, Image.LANCZOS)
+        if olcek > 1.3:
+            kesik = kesik.filter(ImageFilter.UnsharpMask(radius=2, percent=70, threshold=2))
+        en, boy = kesik.size
+        pay = GOLGE_PAY
+        maske = Image.new("L", (en + 2 * pay, boy + 2 * pay), 0)
+        guc = self.p["golge"]
+        maske.paste(kesik.getchannel("A").point(lambda v: int(v * guc * 0.7)), (pay, pay))
+        ImageDraw.Draw(maske).ellipse((pay + en * 0.06, pay + boy - 16, pay + en * 0.94, pay + boy + 20),
+                                      fill=int(255 * guc))  # ürünün altındaki zemin gölgesi
+        golge = Image.new("RGBA", maske.size, (0, 0, 0, 0))
+        golge.putalpha(maske.filter(ImageFilter.GaussianBlur(20)))
+        return kesik, golge
 
     # --- ortak parçalar ------------------------------------------------------
     def _ust_bilgi(self, resim):
@@ -378,7 +407,10 @@ class Kurgu:
         if v.get("puan"):
             parcalar.append(f"★ {v['puan']}")
         if v.get("toplam_yorum"):
-            parcalar.append(f"{v['toplam_yorum']} değerlendirme")
+            toplam_ = str(v["toplam_yorum"]).strip()
+            if toplam_.isdigit() and len(toplam_) > 3:
+                toplam_ = f"{int(toplam_):,}".replace(",", ".")
+            parcalar.append(f"{toplam_} değerlendirme")
         font = F(32)
         while parcalar:
             genislikler = [c.textlength(m, font=font) + 44 for m in parcalar]
@@ -433,14 +465,15 @@ class Kurgu:
         serit_y = PANEL[3] - SERIT
         if self.kesik is not None:
             z = (1 + 0.04 * min(1.0, t / 30)) * self._vurus(t)
-            urun, golge = self.kesik, self.golge
+            urun, golge = self.kesikler[self._sahne_no(t) % len(self.kesikler)]
             if abs(z - 1) > 0.003:
-                boyut = (int(urun.width * z), int(urun.height * z))
-                urun, golge = urun.resize(boyut, Image.BILINEAR), golge.resize(boyut, Image.BILINEAR)
+                urun = urun.resize((int(urun.width * z), int(urun.height * z)), Image.BILINEAR)
+                golge = golge.resize((int(golge.width * z), int(golge.height * z)), Image.BILINEAR)
             dy = int(9 * math.sin(2 * math.pi * t / 3.2))
             x = PANEL[0] + (pw - urun.width) // 2
             y = PANEL[1] + (self.urun_alani - urun.height) // 2 + dy
-            resim.paste(golge, (x + 6, y + 28 - dy), golge)
+            pay = (golge.width - urun.width) // 2
+            resim.paste(golge, (x - pay, y - pay + 16 - dy), golge)
             resim.paste(urun, (x, y), urun)
             resim.paste(self.ad_seridi, (serit_x, serit_y), self.ad_seridi)
             return
@@ -628,10 +661,10 @@ class Kurgu:
         p = self.p
         renk = {"ALINIR": p["yesil"], "ALINMAZ": p["kirmizi"]}.get(self.veri["hukum"], p["dikkat"])
         if self.veri.get("kime_uygun") and t > 0.35:
-            satirlar = sar(c, self.veri["kime_uygun"], F(44), G - 2 * KENAR)[:2]
-            ust = ICERIK_Y + 190
-            self._kart(c, 0, ust, ust + 40 + len(satirlar) * 56)
-            ortala(c, satirlar, F(44), ust + 22, p["metin"], 56)
+            satirlar = sar(c, self.veri["kime_uygun"], F(42), G - 2 * KENAR)[:2]
+            ust = ICERIK_Y + 208
+            self._kart(c, 0, ust, ust + 36 + len(satirlar) * 52)
+            ortala(c, satirlar, F(42), ust + 20, p["metin"], 52)
         metin = self.veri["hukum"]
         font = F(118 if len(metin) <= 8 else 98)
         sol, ust_, sag, alt = c.textbbox((0, 0), metin, font=font)
@@ -646,7 +679,7 @@ class Kurgu:
         if damga.width > G - 40:
             oran = (G - 40) / damga.width
             damga = damga.resize((int(damga.width * oran), int(damga.height * oran)), Image.BICUBIC)
-        resim.paste(damga, ((G - damga.width) // 2, ICERIK_Y + 90 - damga.height // 2), damga)
+        resim.paste(damga, ((G - damga.width) // 2, ICERIK_Y + 104 - damga.height // 2), damga)
         return resim
 
     def kapanis(self, t, sure, tg):

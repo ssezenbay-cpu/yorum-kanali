@@ -38,9 +38,10 @@ Kesin kurallar:
 9. Senaryo konuşma dilinde, kısa cümlelerle, toplam 45-60 kelime (20-28 saniye). Fiyatı ve puanı sesli okuma; ekranda etiket olarak görünür. Bağlam bölümü tek kısa cümle: kaç yorum okunduğu ve hangi sitelerden; sonuna "Hüküm sonda." ekle.
    Dürüst oran: azınlıktaki bir bulguya "çoğu", "herkes" deme; sayıyı söyle. Ürünü anlatan yorum 30'dan azsa hükmü temkinli kur.
    Kapanış: "Sıradaki ürün ne olsun? Yorumlara yaz." gibi tek cümle ve "Yorum dosyası #N".
-   Açılış (acilis ve ekran_acilis) okuduklarındaki EN ŞAŞIRTICI somut bulgudur ve bir rakam içerir. Hükmü açılışta söyleme; hüküm sona kalsın.
+   Açılış (acilis ve ekran_acilis) okuduklarındaki EN ŞAŞIRTICI somut bulgudur ve bir rakam içerir. Ürünün kendisiyle ilgili olsun (dayanıklılık, performans, kullanım); ürünü hiç görmemiş biri de anlamalı, açıklamasız teknik terim yok. Hükmü açılışta söyleme; hüküm sona kalsın.
+   Övgü bölümü bağlamdaki sayıyı tekrar etmez; doğrudan "12 kişi ..." diye başlar.
    Övülenler ürünün kendi özelliklerinden seçilir; "orijinal çıktı", "hızlı geldi" övgü sayılmaz. Aynı konu hem övgüde hem şikâyette olmasın.
-   "urun_gorseli" alanı için: kullanıcı ekran görüntüsü gönderdiyse ürün fotoğrafının yerini yaz, göndermediyse null.
+   "urun_gorseli" ve "urun_fotograflari" alanları için: kullanıcı görüntü gönderdiyse ürün fotoğrafının yerini ve tamamı ürün fotoğrafı olan görüntülerin numaralarını yaz; göndermediyse null ve [].
 10. Araştırma bitince yalnızca istenen JSON'u döndür, başka hiçbir şey yazma."""
 
 ISTEK = """Ürün: {urun}

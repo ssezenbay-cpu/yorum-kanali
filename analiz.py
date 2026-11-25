@@ -42,9 +42,11 @@ Kesin kurallar:
    Fiyatı, puanı ve toplam değerlendirme sayısını sesli okuma; bunlar ekranda küçük etiket olarak görünür. Bağlam bölümü tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı; sonuna "Hüküm sonda." ekle (izleyici sonunu merak etsin).
    Dürüst oran: azınlıktaki bir bulguya "çoğu", "herkes", "neredeyse hepsi" deme; sayıyı söyle ("46 yorumdan 6'sı"). Ürünü anlatan yorum 30'dan azsa hükmü temkinli kur ve "okuduğum yorumlara göre" de.
    Kapanış: "Sıradaki ürün ne olsun? Yorumlara yaz." gibi izleyiciyi yorum yazmaya çağıran tek cümle ve "Yorum dosyası #N".
-   Açılış (acilis ve ekran_acilis) yorumlardaki EN ŞAŞIRTICI somut bulgudur ve bir rakam içerir, ör. "1.839 liralık termosta 6 kişi garanti kodunu bulamadı". Hükmü açılışta söyleme; hüküm sona kalsın ki izleyici merak etsin.
+   Açılış (acilis ve ekran_acilis) yorumlardaki EN ŞAŞIRTICI somut bulgudur ve bir rakam içerir. Ürünün kendisiyle ilgili olsun (dayanıklılık, performans, kullanım); kargo, satıcı, garanti belgesi gibi konular yalnızca şikâyetlerin başını çekiyorsa açılış olur. Ürünü hiç görmemiş biri de ilk duyuşta anlamalı: açıklamasız teknik terim yok. Ör. "Bu süpürgeyi alan 9 kişi aynı şeyden şikâyet ediyor" ya da "Bu kulaklığın şarjı 11 kişide bir ayda bitmiş". Hükmü açılışta söyleme; hüküm sona kalsın ki izleyici merak etsin.
+   Övgü bölümü bağlamdaki sayıyı tekrar etmez ("ürünü anlatan 46 yorumun" deme); doğrudan "12 kişi ..." diye başlar.
    Övülenler ürünün kendi özelliklerinden seçilir (performans, malzeme, tasarım, kullanım kolaylığı). "Orijinal çıktı", "hızlı geldi", "iyi paketlenmiş" övgü sayılmaz. Şikâyetlerde taklit gelme, garanti ya da fatura sorunu gibi satın alma riskleri sayılabilir. Aynı konu hem övgüde hem şikâyette olmasın; birbiriyle çelişen maddeler seçme.
    "urun_gorseli": ürünün kendi büyük fotoğrafının hangi görüntüde olduğu (1'den başlayarak) ve o fotoğrafın sınırları [sol, üst, sağ, alt], görüntünün genişliğine ve yüksekliğine oranla 0 ile 1 arası. Kutu yalnızca ürün fotoğrafını kapsasın: sayfa okları, kalp/paylaş simgeleri, rozetler, "kargo bedava" etiketleri, sayfa göstergesi noktaları ve yazılar dışarıda kalsın. Alıcıların yorumlara eklediği fotoğrafları seçme. Ürün fotoğrafı yoksa null.
+   "urun_fotograflari": kullanıcının gönderdiği ve tamamı ürün fotoğrafı olan görüntülerin numaraları (ürün sayfasından kaydedilmiş farklı açılar). Ürünün yalnızca bir parçasını gösteren yakın çekimler girmez; ürün baştan sona görünmeli. Ekran görüntüleri, yorum ekranları ve alıcıların çektiği fotoğraflar girmez. Yoksa [].
 10. Senaryonun bölümleri sırayla okunacak; her bölüm bir öncekinin devamı gibi akmalı.
 
 Yalnızca geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma.
@@ -66,6 +68,7 @@ SEMA = """{{
   "kime_uygun": "en fazla 10 kelime: kime uygun ya da kime uygun değil",
   "ekran_acilis": "ilk karedeki büyük yazı: en şaşırtıcı bulgu, rakamlı, en fazla 7 kelime; hüküm değil",
   "urun_gorseli": {{"goruntu": 1, "kutu": [0.0, 0.0, 1.0, 1.0]}},
+  "urun_fotograflari": [1, 2],
   "senaryo": {{
     "acilis": "...",
     "baglam": "tek kısa cümle: kaç yorum okunduğu ve kaçının ürünü anlattığı, ardından: Hüküm sonda.",
@@ -181,6 +184,8 @@ def dogrula(veri, no):
         if not str(senaryo.get(rol, "")).strip():
             raise AnalizHatasi(f"Senaryonun '{rol}' bölümü boş geldi.")
         senaryo[rol] = " ".join(str(senaryo[rol]).split())
+    if "sonda" not in senaryo["baglam"].lower():
+        senaryo["baglam"] = senaryo["baglam"].rstrip(" .") + ". Hüküm sonda."
     if f"#{no}" not in senaryo["kapanis"]:
         senaryo["kapanis"] = senaryo["kapanis"].rstrip(".") + f". Yorum dosyası #{no}."
 
@@ -204,6 +209,15 @@ def dogrula(veri, no):
 
     veri["ekran_acilis"] = str(veri.get("ekran_acilis") or senaryo["acilis"]).strip()
     veri["urun_gorseli"] = _gorsel_kutusu(veri.get("urun_gorseli"))
+    fotolar = []
+    for n in veri.get("urun_fotograflari") or []:
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            continue
+        if n >= 1 and n not in fotolar:
+            fotolar.append(n)
+    veri["urun_fotograflari"] = fotolar[:4]
     veri["kime_uygun"] = str(veri.get("kime_uygun") or "").strip()
     veri["etiketler"] = [str(e).lstrip("#").replace(" ", "") for e in (veri.get("etiketler") or [])][:8]
     veri["uyarilar"] = uyarilar
