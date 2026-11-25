@@ -69,7 +69,7 @@ YARDIM = (
     "/rapor – hangi ürün grubunun daha iyi gittiğini gösterir\n"
     "/demo – API kullanmadan sessiz örnek video yapar\n"
     "/okunus KELİME = OKUNUŞ – yanlış okunan kelimeyi düzeltir (ör. /okunus Dreame = Drim)\n"    "/dene 31 – bir sayının ya da cümlenin okunuşunu dinletir; doğru olanı seçersin\n"
-    "/siradaki airfryer | robot süpürge – videonun sonunda izleyiciye sorulacak iki ürün\n"
+    "/siradaki airfryer | robot süpürge – videonun sonunda izleyiciye sorulacak iki ürün\n"    "/fiyat NO 1.249 – videonun fiyat etiketini elle girer\n"
     "/tekrar NO – videonun sesini ve kurgusunu yeniden yapar; /tekrar NO tam analizi de yeniler\n\n"
     "Ayarlar:\n"
     "/ayarlar – hangi ayarların tamam olduğunu gösterir\n"
@@ -430,6 +430,31 @@ async def efekt_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Ses efektleri: {'açık' if miksaj.efektler_acik() else 'kapalı'} (geçişte whoosh, sayılarda pop, hükümde damga).\n"
         "Değiştirmek için: /efekt ac | kapat")
+
+
+async def fiyat_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/fiyat NO 1.249: videonun fiyat etiketini elle girer (ürün sayfası görüntüsü yoksa)."""
+    if not yetkili(update):
+        return
+    try:
+        no = int(context.args[0].lstrip("#"))
+        tutar = " ".join(context.args[1:]).strip()
+        assert re.search(r"\d", tutar)
+    except (IndexError, ValueError, AssertionError):
+        await update.message.reply_text("Kullanım: /fiyat DOSYA_NO TUTAR   (ör. /fiyat 4 1.249)\nSilmek için: /fiyat 4 sil")
+        return
+    analiz_yolu = CALISMA / f"dosya_{no:03d}" / "analiz.json"
+    if not analiz_yolu.exists():
+        await update.message.reply_text(f"#{no} için kayıtlı analiz yok.")
+        return
+    veri = json.loads(analiz_yolu.read_text(encoding="utf-8"))
+    if tutar.lower() == "sil":
+        veri["fiyat"] = ""
+    else:
+        veri["fiyat"] = tutar if re.search(r"tl|₺", tutar, re.I) else f"{tutar} TL"
+    analiz_yolu.write_text(json.dumps(veri, ensure_ascii=False, indent=1), encoding="utf-8")
+    await update.message.reply_text(f"#{no} fiyat: {veri['fiyat'] or 'yok'} ({datetime.now():%d.%m.%Y} tarihli).\n"
+                                    f"Videoya uygulamak için: /tekrar {no}  (metni de yenileyeceksen: /tekrar {no} metin)")
 
 
 async def siradaki_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -890,7 +915,7 @@ def yayin_kontrolu(veri, no):
     if veri.get("fiyat") and veri.get("puan"):
         satirlar.append("✅ Fiyat ve puan var")
     else:
-        satirlar.append("⚠️ Fiyat ya da puan yok. Ürün sayfasının ekran görüntüsünü eklersen çıkar")
+        satirlar.append(f"⚠️ Fiyat ya da puan yok. Fiyatı elle girmek için: /fiyat {no} 1.249")
     n = veri.get("urun_yorumu", veri.get("okunan_yorum", 0))
     if n >= 150:
         satirlar.append(f"✅ {n} ürün yorumu okundu")
@@ -1344,6 +1369,7 @@ def main():
     uygulama.add_handler(CallbackQueryHandler(tema_secildi, pattern=r"^tema:"))
     uygulama.add_handler(CommandHandler("dene", dene_komutu))
     uygulama.add_handler(CommandHandler("siradaki", siradaki_komutu))
+    uygulama.add_handler(CommandHandler("fiyat", fiyat_komutu))
     uygulama.add_handler(CallbackQueryHandler(okunus_secildi, pattern=r"^oku:"))
     uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("zip"), guncelleme_al))
