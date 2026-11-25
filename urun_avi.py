@@ -155,9 +155,11 @@ def mesaj_metni(veri, web, dag, ogrenildi):
     if kaynaklar:
         satirlar.append("Kaynaklar: " + " · ".join(
             f'<a href="{e(k, quote=True)}">{e(urllib.parse.urlparse(k).netloc)}</a>' for k in kaynaklar))
-    satirlar.append("\nLinkte sıralamayı \"En çok değerlendirilen\" yap; 1-2 yıldızlı yorumlardan da görüntü al.")
+    satirlar.append("\nAşağıdaki düğmeye basarsan bot o ürünün yorumlarını internette okuyup videoyu hazırlar.")
     return "\n".join(satirlar)[:4000]
 
 
 def haftalik_mesaj():
-    return mesaj_metni(*arastir())
+    """(mesaj metni, aday listesi) döndürür."""
+    veri, web, dag, ogrenildi = arastir()
+    return mesaj_metni(veri, web, dag, ogrenildi), list(veri["adaylar"][:6])

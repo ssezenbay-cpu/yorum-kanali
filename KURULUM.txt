@@ -53,6 +53,13 @@ pahalı ürün gruplarından. Video yayınlandıktan 3-7 gün sonra /sonuc ile i
 tıklama ve (varsa) kazancı gir. Her grupta 3+ video sonucu olunca bot, hangi grup
 daha çok kazandırıyorsa sonraki listelerde ondan daha çok aday önerir.
 
+EN KOLAY YOL: /arastir
+Bota "/arastir Stanley Quencher 1.18 L" gibi ürün adını yaz. Bot Hepsiburada,
+Şikâyetvar, Ekşi Sözlük, forumlar ve Akakçe'deki yorumları okur, videoyu hazırlar
+(2-4 dakika, video başına yaklaşık 0,3 dolar). /oneri listesindeki düğmeler de aynı işi
+yapar. Trendyol ve Amazon otomatik okumaya kapalıdır; oradan yorum eklemek istersen önce
+ekran görüntülerini gönder, sonra /arastir yaz: ikisi birlikte okunur.
+
 GÜNLÜK KULLANIM (telefondan)
 1. Ürün sayfasının ekran görüntüsünü gönder (ilk görüntü bu olmalı:
    ürün adı, fiyat, puan görünsün).

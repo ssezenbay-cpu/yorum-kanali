@@ -1,5 +1,6 @@
 """Telegram botu: ekran görüntülerini alır, videoyu üretir ve sana geri gönderir."""
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -18,6 +19,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, Con
 
 import ayarlar as A
 
+import arastirma
 import urun_avi
 from analiz import ROLLER, AnalizHatasi, analiz_et, anthropic_dogrula
 from demo import demo_uret
@@ -25,7 +27,7 @@ from ayarlar import (CALISMA, CIKTI, GELEN, KOK, TELEGRAM_PROXY, TELEGRAM_TOKEN,
                      maskele, no_kaydet, sonraki_no)
 from ses import SesHatasi, sesleri_listele, seslendir
 from veriler import rapor_metni, sonuc_kaydet, video_kaydet
-from video import videoyu_kurgula
+from video import kapak_uret, videoyu_kurgula
 
 try:
     from zoneinfo import ZoneInfo
@@ -42,10 +44,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("bot")
 
 YARDIM = (
-    "Nasıl kullanılır:\n"
-    "1. Ürün sayfasının ekran görüntüsünü gönder (ürün adı, fiyat ve puan görünsün).\n"
-    "2. Yorumların ekran görüntülerini gönder: en az 30 yorum, bir kısmı 1-2 yıldızlılardan.\n"
-    "3. Hepsini gönderince /hazirla yaz.\n\n"
+    "En kolay yol:\n"
+    "/arastir ÜRÜN ADI – bot yorumları internette kendisi okur (Hepsiburada, Şikâyetvar, Ekşi, forumlar) "
+    "ve videoyu hazırlar. /oneri listesindeki düğmeler de aynısını yapar.\n\n"
+    "Ekran görüntüsüyle (Trendyol gibi otomatik okunamayan siteler için):\n"
+    "1. Ürün sayfasının ve yorumların ekran görüntülerini gönder.\n"
+    "2. /hazirla yaz. İstersen görüntüleri gönderip /arastir da yazabilirsin; ikisi birlikte okunur.\n\n"
     "Diğer komutlar:\n"
     "/durum – kaç görüntü gönderdiğini gösterir\n"
     "/iptal – gönderilen görüntüleri siler\n"
@@ -436,21 +440,40 @@ async def oneri(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     bekle = await update.message.reply_text("İnternette araştırıyorum, 1-3 dakika sürebilir…")
     try:
-        metin = await asyncio.to_thread(urun_avi.haftalik_mesaj)
+        metin, adaylar = await asyncio.to_thread(urun_avi.haftalik_mesaj)
     except Exception as hata:  # noqa: BLE001 - kullanıcıya anlaşılır mesaj
         log.exception("öneri hatası")
         await bekle.edit_text(f"Öneri alınamadı: {hata}")
         return
     await bekle.delete()
-    await _html_gonder(context.bot, update.effective_chat.id, metin)
+    await _html_gonder(context.bot, update.effective_chat.id, metin, _aday_dugmeleri(adaylar))
 
 
-async def _html_gonder(bot, chat_id, metin):
+def _kisalt_bayt(metin, sinir):
+    while len(metin.encode("utf-8")) > sinir:
+        metin = metin[:-1]
+    return metin
+
+
+def _aday_dugmeleri(adaylar):
+    satirlar = []
+    for i, aday in enumerate(adaylar, 1):
+        urun = str(aday.get("urun") or aday.get("arama") or "").strip()
+        if not urun:
+            continue
+        satirlar.append([InlineKeyboardButton(f"🎬 {i}. {urun[:40]}",
+                                              callback_data="ara:" + _kisalt_bayt(urun, 60))])
+    return InlineKeyboardMarkup(satirlar) if satirlar else None
+
+
+async def _html_gonder(bot, chat_id, metin, dugmeler=None):
     try:
-        await bot.send_message(chat_id, metin, parse_mode="HTML", disable_web_page_preview=True)
+        await bot.send_message(chat_id, metin, parse_mode="HTML", disable_web_page_preview=True,
+                               reply_markup=dugmeler)
     except Exception:  # noqa: BLE001 - biçim bozulursa düz metin gönder
         import re as _re
-        await bot.send_message(chat_id, _re.sub(r"<[^>]+>", "", metin), disable_web_page_preview=True)
+        await bot.send_message(chat_id, _re.sub(r"<[^>]+>", "", metin), disable_web_page_preview=True,
+                               reply_markup=dugmeler)
 
 
 def _sayi(metin):
@@ -500,8 +523,8 @@ async def _haftalik_dongu(uygulama):
         if not (A.IZINLI_KULLANICI_ID and A.ANTHROPIC_API_KEY):
             continue
         try:
-            metin = await asyncio.to_thread(urun_avi.haftalik_mesaj)
-            await _html_gonder(uygulama.bot, int(A.IZINLI_KULLANICI_ID), metin)
+            metin, adaylar = await asyncio.to_thread(urun_avi.haftalik_mesaj)
+            await _html_gonder(uygulama.bot, int(A.IZINLI_KULLANICI_ID), metin, _aday_dugmeleri(adaylar))
         except Exception as hata:  # noqa: BLE001
             log.exception("Haftalık liste gönderilemedi")
             try:
@@ -514,9 +537,10 @@ async def _haftalik_dongu(uygulama):
 
 def paylasim_metni(veri, no):
     etiketler = " ".join("#" + e for e in veri.get("etiketler", []) if e)
+    kaynak = f"Okunan yorumlar: {arastirma.kaynak_satiri(veri)}.\n" if veri.get("kaynaklar") else ""
     parcalar = [
         f"BAŞLIK:\n{veri['baslik']}",
-        f"AÇIKLAMA:\n{veri.get('aciklama', '').strip()}\n\n"
+        f"AÇIKLAMA:\n{veri.get('aciklama', '').strip()}\n\n{kaynak}"
         f"Ürün linki profilde: Yorum dosyası #{no}. Profildeki link satış ortaklığı linkidir. #işbirliği\n"
         f"{etiketler}",
     ]
@@ -528,6 +552,51 @@ def paylasim_metni(veri, no):
     return "\n\n".join(parcalar)
 
 
+async def _uret(context: ContextTypes.DEFAULT_TYPE, chat_id, ilk_mesaj, analiz_cagir, gorseller, hata_eki):
+    """Analiz → ses → video → gönderim. Başarılıysa True döner."""
+    kilit = context.application.bot_data.setdefault("uretim_kilidi", asyncio.Lock())
+    if kilit.locked():
+        await context.bot.send_message(chat_id, "Şu an bir video hazırlanıyor; o bitince tekrar dene.")
+        return False
+    async with kilit:
+        no = sonraki_no()
+        klasor = CALISMA / f"dosya_{no:03d}"
+        klasor.mkdir(parents=True, exist_ok=True)
+        durum_mesaji = await context.bot.send_message(chat_id, ilk_mesaj)
+        try:
+            veri = await asyncio.to_thread(analiz_cagir, no)
+            await durum_mesaji.edit_text(
+                f"2/3 Seslendiriyorum… ({veri['okunan_yorum']} yorum okundu, {veri['urun_yorumu']} tanesi ürünü "
+                f"anlatıyor; hüküm: {veri['hukum']})")
+            metin = " ".join(veri["senaryo"][r] for r in ROLLER)
+            ses_yolu = klasor / "ses.mp3"
+            hiz = await asyncio.to_thread(seslendir, metin, ses_yolu)
+            await durum_mesaji.edit_text("3/3 Videoyu kurguluyorum… (1-2 dakika)")
+            kullanilan = list(gorseller) or [kapak_uret(veri["urun_adi"], klasor / "kapak.png")]
+            cikti = CIKTI / f"yorum_dosyasi_{no:03d}.mp4"
+            await asyncio.to_thread(videoyu_kurgula, veri, kullanilan, ses_yolu, hiz, no, cikti)
+        except (AnalizHatasi, SesHatasi) as hata:
+            await durum_mesaji.edit_text(f"Olmadı: {hata}\n\n{hata_eki}")
+            return False
+        except Exception as hata:  # noqa: BLE001
+            log.exception("üretim hatası")
+            await durum_mesaji.edit_text(f"Beklenmeyen hata: {hata}\n\n{hata_eki}")
+            return False
+
+        no_kaydet(no)
+        video_kaydet(no, veri)
+        for kaynak in gorseller:
+            shutil.copy2(kaynak, klasor / kaynak.name)
+        (klasor / "senaryo.txt").write_text(metin, encoding="utf-8")
+        (klasor / "analiz.json").write_text(json.dumps(veri, ensure_ascii=False, indent=1), encoding="utf-8")
+        await durum_mesaji.edit_text(f"Hazır: Yorum dosyası #{no}")
+        with open(cikti, "rb") as dosya:
+            await context.bot.send_video(chat_id, dosya, caption=f"Yorum dosyası #{no}", supports_streaming=True,
+                                         read_timeout=180, write_timeout=180)
+        await context.bot.send_message(chat_id, paylasim_metni(veri, no))
+        return True
+
+
 async def hazirla(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not yetkili(update):
         return
@@ -535,43 +604,48 @@ async def hazirla(update: Update, context: ContextTypes.DEFAULT_TYPE):
     liste = resimler(chat_id)
     if len(liste) < 2:
         await update.message.reply_text(
-            "En az 2 görüntü gönder: ürün sayfası ve yorumlar. İlk görüntü ürün sayfası olmalı.")
+            "En az 2 görüntü gönder: ürün sayfası ve yorumlar. İlk görüntü ürün sayfası olmalı.\n"
+            "Görüntüsüz yol: /arastir ÜRÜN ADI")
         return
-    no = sonraki_no()
-    klasor = CALISMA / f"dosya_{no:03d}"
-    klasor.mkdir(parents=True, exist_ok=True)
-    durum_mesaji = await update.message.reply_text(f"1/3 Yorumları okuyorum… ({len(liste)} görüntü)")
-    try:
-        veri = await asyncio.to_thread(analiz_et, liste, no)
-        await durum_mesaji.edit_text(
-            f"2/3 Seslendiriyorum… ({veri['okunan_yorum']} yorum okundu, {veri['urun_yorumu']} tanesi ürünü "
-            f"anlatıyor; hüküm: {veri['hukum']})")
-        metin = " ".join(veri["senaryo"][r] for r in ROLLER)
-        ses_yolu = klasor / "ses.mp3"
-        hiz = await asyncio.to_thread(seslendir, metin, ses_yolu)
-        await durum_mesaji.edit_text("3/3 Videoyu kurguluyorum… (1-2 dakika)")
-        cikti = CIKTI / f"yorum_dosyasi_{no:03d}.mp4"
-        await asyncio.to_thread(videoyu_kurgula, veri, liste, ses_yolu, hiz, no, cikti)
-    except (AnalizHatasi, SesHatasi) as hata:
-        await durum_mesaji.edit_text(f"Olmadı: {hata}\n\nGörüntüler duruyor. Ekleme yapıp /hazirla ile tekrar deneyebilir ya da /iptal ile silebilirsin.")
-        return
-    except Exception as hata:  # noqa: BLE001
-        log.exception("üretim hatası")
-        await durum_mesaji.edit_text(f"Beklenmeyen hata: {hata}\n\nGörüntüler duruyor; /hazirla ile tekrar dene.")
-        return
+    tamam = await _uret(context, chat_id, f"1/3 Yorumları okuyorum… ({len(liste)} görüntü)",
+                        lambda no: analiz_et(liste, no), liste,
+                        "Görüntüler duruyor. Ekleme yapıp /hazirla ile tekrar deneyebilir ya da /iptal ile silebilirsin.")
+    if tamam:
+        shutil.rmtree(oturum(chat_id), ignore_errors=True)
 
-    no_kaydet(no)
-    video_kaydet(no, veri)
-    for kaynak in liste:
-        shutil.copy2(kaynak, klasor / kaynak.name)
-    (klasor / "senaryo.txt").write_text(metin, encoding="utf-8")
-    await durum_mesaji.edit_text(f"Hazır: Yorum dosyası #{no}")
-    with open(cikti, "rb") as dosya:
-        await update.message.reply_video(
-            dosya, caption=f"Yorum dosyası #{no}", supports_streaming=True,
-            read_timeout=180, write_timeout=180)
-    await update.message.reply_text(paylasim_metni(veri, no))
-    shutil.rmtree(oturum(chat_id), ignore_errors=True)
+
+async def _arastir_ve_uret(context, chat_id, urun):
+    liste = resimler(chat_id)
+    ek = f" + {len(liste)} ekran görüntüsü" if liste else ""
+    tamam = await _uret(
+        context, chat_id,
+        f"1/3 \"{urun}\" için internetteki yorumları okuyorum{ek}… (2-4 dakika)",
+        lambda no: arastirma.arastir(urun, no, liste), liste,
+        f"Tekrar denemek için: /arastir {urun}")
+    if tamam and liste:
+        shutil.rmtree(oturum(chat_id), ignore_errors=True)
+
+
+async def arastir_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not yetkili(update):
+        return
+    urun = " ".join(context.args).strip()
+    if not urun:
+        await update.message.reply_text(
+            "Kullanım: /arastir ÜRÜN ADI\nÖrnek: /arastir Stanley Quencher 1.18 L\n\n"
+            "Bot Hepsiburada, Şikâyetvar, Ekşi Sözlük, forumlar ve Akakçe'deki yorumları okuyup videoyu hazırlar. "
+            "Trendyol ve Amazon otomatik okumaya kapalı; oradan yorum eklemek istersen önce ekran görüntülerini gönder.")
+        return
+    await _arastir_ve_uret(context, update.effective_chat.id, urun)
+
+
+async def aday_secildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sorgu = update.callback_query
+    await sorgu.answer()
+    if not yetkili(update):
+        return
+    urun = sorgu.data.split(":", 1)[1]
+    await _arastir_ve_uret(context, update.effective_chat.id, urun)
 
 
 async def _baglandi(uygulama):
@@ -619,6 +693,8 @@ def main():
     uygulama.add_handler(CommandHandler("kayit", kayit_komutu))
     uygulama.add_handler(CommandHandler("yeniden", yeniden_komutu))
     uygulama.add_handler(CommandHandler("guncelle", guncelle_komutu))
+    uygulama.add_handler(CommandHandler("arastir", arastir_komutu))
+    uygulama.add_handler(CallbackQueryHandler(aday_secildi, pattern=r"^ara:"))
     uygulama.add_handler(MessageHandler(filters.Document.FileExtension("zip"), guncelleme_al))
     uygulama.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, resim_al))
     uygulama.add_error_handler(hata_yakala)

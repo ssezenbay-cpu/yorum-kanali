@@ -72,6 +72,31 @@ def yuvarlak_maske(en, boy, yaricap):
     return maske
 
 
+def kapak_uret(urun_adi, hedef, alt_yazi="İnternetteki yorumlar okundu"):
+    """Ekran görüntüsü yokken ürün kartı yerine kullanılacak sade kapak görseli."""
+    en, boy = 1200, 900
+    resim = Image.new("RGB", (en, boy), KOYU)
+    c = ImageDraw.Draw(resim)
+    ust, alt = (38, 44, 58), (14, 15, 18)
+    for y in range(boy):
+        o = y / boy
+        c.line([(0, y), (en, y)], fill=tuple(int(ust[i] + (alt[i] - ust[i]) * o) for i in range(3)))
+    c.rounded_rectangle((60, 60, en - 60, boy - 60), 40, outline=SARI, width=6)
+    font = F(92)
+    satirlar = sar(c, urun_adi, font, en - 220)[:3]
+    aralik = 108
+    y = (boy - len(satirlar) * aralik) // 2 - 50
+    for satir in satirlar:
+        genislik = c.textlength(satir, font=font)
+        c.text(((en - genislik) / 2, y), satir, font=font, fill=BEYAZ)
+        y += aralik
+    kucuk = F(44, False)
+    genislik = c.textlength(alt_yazi, font=kucuk)
+    c.text(((en - genislik) / 2, y + 40), alt_yazi, font=kucuk, fill=SARI)
+    resim.save(hedef)
+    return hedef
+
+
 class Kurgu:
     def __init__(self, veri, resimler, no):
         self.veri = veri

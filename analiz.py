@@ -43,9 +43,7 @@ Kesin kurallar:
 Yalnızca geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma.
 Görüntülerde ürün sayfası ya da yorum yoksa yalnızca {"hata": "kısa açıklama"} döndür."""
 
-KULLANICI = """{n} ekran görüntüsü gönderiyorum. Bu video "Yorum dosyası #{no}" olacak.
-Şu yapıda JSON döndür:
-{{
+SEMA = """{{
   "urun_adi": "kısa ürün adı, en fazla 6 kelime",
   "kategori": "ürün tipi, 1-3 kelime (ör. termos, robot süpürge, kışlık bot)",
   "grup": "gunluk | ev_elektronigi | pahali  (pahali: 20.000 TL üstü; ev_elektronigi: daha ucuz elektronik ve küçük ev aletleri; gunluk: geri kalan her şey)",
@@ -73,6 +71,10 @@ KULLANICI = """{n} ekran görüntüsü gönderiyorum. Bu video "Yorum dosyası #
   "etiketler": ["5-8 etiket, # işareti olmadan"],
   "uyarilar": ["okunamayan veya belirsiz bilgiler"]
 }}"""
+
+KULLANICI = """{n} ekran görüntüsü gönderiyorum. Bu video "Yorum dosyası #{no}" olacak.
+Şu yapıda JSON döndür:
+""" + SEMA
 
 
 def _resim_parcasi(yol):
